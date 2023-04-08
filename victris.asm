@@ -75,6 +75,7 @@ CurChar:        .res 1      ; Current output character. Read by DrawBuff
 CurColor:       .res 1      ; Color of current character. Read by DrawBuff
 BuffPtr:        .res 1      ; Pointer into character buffer. Used by drawBuff.
 IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Check collision.
+seed:           .res 1      ; Generated random number. 
 
 ; For 16 bit addition and subtraction
 ; Used by 'add' and 'sub' functions
@@ -106,6 +107,11 @@ main:
             
             jsr ClearScreen
             jsr SetupBoard
+
+
+            lda #$11                ; TODO: init seed from timer
+            sta seed
+
 @game:
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
             jsr GetRandPiece        ; Pick a random piece
@@ -243,32 +249,26 @@ ClearScreen:
             jsr $FFD2
             rts
 
-; Get a not-so-random number by reading the low bits from
-; one of the timers. Need a number from 0 to 6 to serve 
-; as an index into the list of 7 pieces
-GetRandPiece:
-            lda #%00000111
-            and CLOCK_LOW
 
-            ;tax ; save value in case it's good
+; Pick a random piece. 
+; https://codebase64.org/doku.php?id=base:small_fast_8-bit_prng
+GetRandPiece:
+
+            lda seed
+            beq @doEor
+            asl
+            beq @noEor ;if the input was $80, skip the EOR
+            bcc @noEor
+@doEor:     eor #$1D
+@noEor:     sta seed
+
+            and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
+            cmp #$07 
+            beq GetRandPiece
 
             sta CurPieceIdx
-            
-            sta SCREEN
             rts
 
-;Mod:
-;		LDA $00  ; memory addr A
-;		SEC
-;Modulus:	SBC $01  ; memory addr B
-;		BCS Modulus
-;		ADC $01
-
-
-
-;            sta SCREEN
- ;           sta CurPieceIdx
- ;           rts
 
 ; Clear the piece buffer
 ClearBuff:  
