@@ -10,6 +10,11 @@
 ; Compile: create label file
 ; rm test.o test; cl65 test.asm -Ln test.lbl -m map.txt -t vic20 -C vic20-aliens-inv/vic20alinv.cfg -o test
 ; Get "random" value form clock low bit at $00A2
+; Modulus function from
+; https://gist.github.com/hausdorff/5993556
+; https://github.com/bbbradsmith/prng_6502
+
+
 ;.debuginfo on
 
 SCREEN = $1E00          ; Start of screen memory
@@ -27,7 +32,8 @@ WHITE = $01             ; Color code for white
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
 BORDER_REG = $900F      ; Screen background and border register
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
-CLOCK_LOW = $A0         ; Low byte of clock. Incremented every 1/60 sec.
+CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
+LAST_ROW = $1FE4        ; Start of last row of screen memory
 
 .segment "RODATA"
 
@@ -37,7 +43,7 @@ PIECES:
     .res 1, %00001111   ; I $0F
     .res 1, %10001110   ; J $8E
     .res 1, %11001100   ; O $CC
-    .res 1, %00011110   ; L $1E
+    .res 1, %00010111   ; L $1E
     .res 1, %01101100   ; S $6C
     .res 1, %11000110   ; Z $C6
 
@@ -68,7 +74,8 @@ PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on 
 CurChar:        .res 1      ; Current output character. Read by DrawBuff
 CurColor:       .res 1      ; Color of current character. Read by DrawBuff
 BuffPtr:        .res 1      ; Pointer into character buffer. Used by drawBuff.
-bork: .res 1
+IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Check collision.
+
 ; For 16 bit addition and subtraction
 ; Used by 'add' and 'sub' functions
 num1lo: .res 1
@@ -91,49 +98,52 @@ main:
 ; buffer.
             lda #$00
             sta CurPieceIdx
-            lda #$00
             sta RotState
-            jsr ClearBuff
-
-            lda #<INITIAL_POS
-            sta PieceLoc
-            lda #>INITIAL_POS
-            sta PieceLoc + 1
+            sta IsCollision
 
             lda #LTBLUE_BLK         ; Setup bg and border
             sta BORDER_REG
             
             jsr ClearScreen
-
             jsr SetupBoard
-
+@game:
+            jsr ClearBuff           ; Clear the buffer containing the unpacked piece
+            jsr GetRandPiece        ; Pick a random piece
             jsr unpack000           ; Unpack the current piece to the buffer
 
+            lda #<INITIAL_POS       ; Set up to introduce new piece
+            sta PieceLoc
+            lda #>INITIAL_POS
+            sta PieceLoc + 1
 
-            lda #SCREEN_HEIGHT - 3
-            sta bork
-@sss:       
 
+
+@move_piece:
             lda #BLOCK_CH            ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
             lda COLORS, X            
             sta CurColor
 
+      
             jsr drawBuff            ; Draw the piece that is in the buffer
 
             jsr Delay
-            lda #SPACE_CH
+
+            jsr CheckCollision
+
+            lda #$FF
+            and IsCollision
+            bne @game
+
+            lda #SPACE_CH           ; Setup to erase the rendered piece
             sta CurChar
             lda #WHITE
             sta CurColor
 
             jsr drawBuff
 
-
-
-
-            lda PieceLoc    
+            lda PieceLoc            ; Advance
             sta num1lo
             lda PieceLoc + 1
             sta num1hi
@@ -149,18 +159,15 @@ main:
             sta PieceLoc
             lda reshi
             sta PieceLoc + 1
-
-
-            
-            dec bork
-            bne @sss
+          
+            jmp @move_piece
 
 foo:        clc
             bcc foo
 
 ; Y is the govenor of the delay
 Delay:      ldx #$FF
-            ldy #$FF
+            ldy #$A0 
 @loop:      dex
             bne @loop
             dey
@@ -236,7 +243,32 @@ ClearScreen:
             jsr $FFD2
             rts
 
+; Get a not-so-random number by reading the low bits from
+; one of the timers. Need a number from 0 to 6 to serve 
+; as an index into the list of 7 pieces
+GetRandPiece:
+            lda #%00000111
+            and CLOCK_LOW
 
+            ;tax ; save value in case it's good
+
+            sta CurPieceIdx
+            
+            sta SCREEN
+            rts
+
+;Mod:
+;		LDA $00  ; memory addr A
+;		SEC
+;Modulus:	SBC $01  ; memory addr B
+;		BCS Modulus
+;		ADC $01
+
+
+
+;            sta SCREEN
+ ;           sta CurPieceIdx
+ ;           rts
 
 ; Clear the piece buffer
 ClearBuff:  
@@ -348,4 +380,21 @@ drawBuff:
 
 ; Compare the buffer with
 ; non space characters
-collisionDetect:
+; Sets or clears IsCollision
+CheckCollision:
+       
+            lda PieceLoc + 1        ; Check if on bottom row of board
+            cmp #>LAST_ROW          ; 16 bit comparison with beginning of
+            bne @is_lower           ; last row of screen. 
+            lda PieceLoc
+            cmp #<LAST_ROW
+            bcc @is_lower
+
+            lda #$01
+            sta IsCollision
+            rts
+
+@is_lower:  lda #$00
+            sta IsCollision
+            rts
+
