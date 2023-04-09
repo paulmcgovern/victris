@@ -14,8 +14,8 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-
-;.debuginfo on
+.debuginfo on
+.macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
 COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
@@ -34,6 +34,7 @@ BORDER_REG = $900F      ; Screen background and border register
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 LAST_ROW = $1FE4        ; Start of last row of screen memory
+SCORE_SCREEN= $1E25     ; Location of score text on screenl
 
 .segment "RODATA"
 
@@ -57,6 +58,15 @@ COLORS:
     .res 1, $05         ; S Green
     .res 1, $02         ; Z Red
 
+; Text strings are is terminated with '@', PETSCII 0.
+TXT_SCORE: scrcode "score:@"
+TXT_TITLE: scrcode "tetris@"
+TXT_CONTROLS_1: scrcode "a: move left@"
+TXT_CONTROLS_2: scrcode "s: rotate@"
+TXT_CONTROLS_3: scrcode "d: move right@"
+TXT_CONTROLS_4: scrcode "space: drop@"
+TXT_START: scrcode "press any key@"
+
 .segment "ZEROPAGE"
 
 
@@ -77,6 +87,8 @@ BuffPtr:        .res 1      ; Pointer into character buffer. Used by drawBuff.
 IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Check collision.
 seed:           .res 1      ; Generated random number. 
 
+TextPtr:        .res 2      ; Pointer to text. Read by PrintString
+
 ; For 16 bit addition and subtraction
 ; Used by 'add' and 'sub' functions
 num1lo: .res 1
@@ -93,10 +105,6 @@ reshi: .res 1
 .segment "CODE"
 
 main:      
-
-; Init vars to sane values
-; and clear rendered piece
-; buffer.
             lda #$00
             sta CurPieceIdx
             sta RotState
@@ -108,9 +116,18 @@ main:
             jsr ClearScreen
             jsr SetupBoard
 
-
-            lda #$11                ; TODO: init seed from timer
+            lda #$11                ; TODO: init seed from timer + 1
             sta seed
+
+            lda #<TXT_SCORE         ; Print 'score', upper right
+            sta TextPtr
+            lda #>TXT_SCORE
+            sta TextPtr + 1
+            lda #<SCORE_SCREEN
+            sta DrawPtrLo
+            lda #>SCORE_SCREEN
+            sta DrawPtrHi            
+            jsr PrintString
 
 @game:
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
@@ -122,15 +139,12 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
-
-
 @move_piece:
             lda #BLOCK_CH            ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
             lda COLORS, X            
             sta CurColor
-
       
             jsr drawBuff            ; Draw the piece that is in the buffer
 
@@ -248,6 +262,18 @@ ClearScreen:
             lda #$93
             jsr $FFD2
             rts
+
+; Print string to screen. Reads from TextPtr.
+; Assumes string is terminated with 0, '@' in PETSCII.
+; Location to print to is given by DrawPtrLo
+PrintString:
+            ldy #$00
+@loop_y:    lda (TextPtr), Y
+            beq @end
+            sta (DrawPtrLo), Y
+            iny
+            jmp @loop_y
+@end:       rts
 
 
 ; Pick a random piece. 
@@ -385,16 +411,18 @@ CheckCollision:
        
             lda PieceLoc + 1        ; Check if on bottom row of board
             cmp #>LAST_ROW          ; 16 bit comparison with beginning of
-            bne @is_lower           ; last row of screen. 
+            bne @above_last         ; last row of screen. 
             lda PieceLoc
             cmp #<LAST_ROW
-            bcc @is_lower
+            bcc @above_last
 
             lda #$01
             sta IsCollision
             rts
 
-@is_lower:  lda #$00
+@above_last:lda #$00
             sta IsCollision
             rts
+
+; check bottom of piece.
 
