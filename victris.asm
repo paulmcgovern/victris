@@ -14,7 +14,7 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-.debuginfo on
+;.debuginfo on
 .macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
@@ -34,7 +34,7 @@ BORDER_REG = $900F      ; Screen background and border register
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 LAST_ROW = $1FE4        ; Start of last row of screen memory
-SCORE_SCREEN= $1E25     ; Location of score text on screenl
+SCORE_SCREEN = $1E25     ; Location of score text on screen
 
 .segment "RODATA"
 
@@ -59,13 +59,13 @@ COLORS:
     .res 1, $02         ; Z Red
 
 ; Text strings are is terminated with '@', PETSCII 0.
-TXT_SCORE: scrcode "score:@"
-TXT_TITLE: scrcode "tetris@"
+TXT_SCORE:      scrcode "score:@"
+TXT_TITLE:      scrcode "tetris@"
 TXT_CONTROLS_1: scrcode "a: move left@"
 TXT_CONTROLS_2: scrcode "s: rotate@"
 TXT_CONTROLS_3: scrcode "d: move right@"
 TXT_CONTROLS_4: scrcode "space: drop@"
-TXT_START: scrcode "press any key@"
+TXT_START:      scrcode "press any key@"
 
 .segment "ZEROPAGE"
 
@@ -76,8 +76,6 @@ PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
 
 DrawPtrLo:      .res 1      ; Low byte of screen pointer
 DrawPtrHi:      .res 1      ; High byte of screen pointer
-ColorPtrLo:     .res 1      ; Low byte of color mem pointer
-ColorPtrHi:     .res 1      ; High byte of color 
 DrawIndex:      .res 1      ; Inexing variable
 
 PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on screen.
@@ -88,8 +86,11 @@ IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Che
 seed:           .res 1      ; Generated random number. 
 Score:          .res 2      ; Current score
 TextPtr:        .res 2      ; Pointer to text. Read by PrintString
-Res:             .res 3 ; 24 bit
-Val :            .res 2
+ScoreScnPtr:    .res 2      ; Pointer to score on screen
+
+; BCD stuff
+Res:            .res 3      ; 24 bit BVD encoded score
+Val :           .res 2      ; Work vars for BCD encoding
 
 ; For 16 bit addition and subtraction
 ; Used by 'add' and 'sub' functions
@@ -133,15 +134,10 @@ main:
             sta DrawPtrHi            
             jsr PrintString
 
-            lda #$CC
-            sta Score
-            lda #$00
-            sta Val
-            lda #$CC
-            sta Val + 1            
-            jsr Bin2BCD
-            lda Res
-            sta SCREEN
+            lda #<SCORE_SCREEN  ; Set up pointer to score value on screen.
+            sta ScoreScnPtr
+            lda #>SCORE_SCREEN
+            sta ScoreScnPtr + 1
 
 @game:
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
@@ -194,6 +190,8 @@ main:
             lda reshi
             sta PieceLoc + 1
           
+            jsr IncScore
+
             jmp @move_piece
 
 foo:        clc
@@ -246,13 +244,19 @@ SetupBoard:
 @done:
             rts
 
-Bin2BCD:    lda #0          ; Clear the result area
+Bin2BCD:
+            lda Score
+            sta Val
+            lda Score + 1
+            sta Val + 1
+
+            lda #0          ; Clear the result area
             sta Res+0
             sta Res+1
             sta Res+2
             ldx #16         ; Setup the bit counter
             sed             ; Enter decimal mode
-@loop:      asl Val+0       ; Shift a bit out of the binary
+@loop_x:    asl Val+0       ; Shift a bit out of the binary
             rol Val+1       ; ... value
             lda Res+0       ; And add it into the result, doubling
             adc Res+0       ; ... it at the same time
@@ -264,9 +268,34 @@ Bin2BCD:    lda #0          ; Clear the result area
             adc Res+2
             sta Res+2
             dex             ; More bits to process?
-            bne @loop
+            bne @loop_x
             cld             ; Leave decimal mode
+
+            ldy #$16        ; Write to row below score label
+            ldx #$02        ; Start at ScoreScnPtr and use Y             
+@loop_res:  lda Res, X      ; Note: PrintBCD modifies Y            
+            jsr PrintBCD
+            dex
+            bpl @loop_res
             rts
+
+PrintBCD:   pha             ; Save the BCD value
+            lsr             ; Shift the four most significant bits
+            lsr             ; ... into the four least significant
+            lsr
+            lsr
+            clc
+            adc #$30 ;  Make a screen code char
+            sta (ScoreScnPtr), Y
+            iny
+            pla             ; Recover the BCD value
+            and #$0F        ; Mask out all but the bottom 4 bits
+            clc
+            adc #$30   ; Make an screen code char
+            sta (ScoreScnPtr), Y
+            iny
+            rts
+
 ; https://codebase64.org/doku.php?id=base:16bit_addition_and_subtraction
 ; 16 bit add
 add:  
@@ -309,6 +338,17 @@ PrintString:
             jmp @loop_y
 @end:       rts
 
+; Incrementthe score (16 bits) and
+; then encode as BCD and print to screen
+IncScore:
+            lda Score
+            clc
+            adc #$01
+            sta Score
+            bcc @skip
+            inc Score + 1            
+@skip:      jsr Bin2BCD
+            rts
 
 ; Pick a random piece. 
 ; https://codebase64.org/doku.php?id=base:small_fast_8-bit_prng
