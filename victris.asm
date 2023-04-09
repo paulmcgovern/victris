@@ -86,8 +86,10 @@ CurColor:       .res 1      ; Color of current character. Read by DrawBuff
 BuffPtr:        .res 1      ; Pointer into character buffer. Used by drawBuff.
 IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Check collision.
 seed:           .res 1      ; Generated random number. 
-
+Score:          .res 2      ; Current score
 TextPtr:        .res 2      ; Pointer to text. Read by PrintString
+Res:             .res 3 ; 24 bit
+Val :            .res 2
 
 ; For 16 bit addition and subtraction
 ; Used by 'add' and 'sub' functions
@@ -109,6 +111,8 @@ main:
             sta CurPieceIdx
             sta RotState
             sta IsCollision
+            sta Score
+            sta Score + 1
 
             lda #LTBLUE_BLK         ; Setup bg and border
             sta BORDER_REG
@@ -128,6 +132,16 @@ main:
             lda #>SCORE_SCREEN
             sta DrawPtrHi            
             jsr PrintString
+
+            lda #$CC
+            sta Score
+            lda #$00
+            sta Val
+            lda #$CC
+            sta Val + 1            
+            jsr Bin2BCD
+            lda Res
+            sta SCREEN
 
 @game:
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
@@ -232,7 +246,27 @@ SetupBoard:
 @done:
             rts
 
-
+Bin2BCD:    lda #0          ; Clear the result area
+            sta Res+0
+            sta Res+1
+            sta Res+2
+            ldx #16         ; Setup the bit counter
+            sed             ; Enter decimal mode
+@loop:      asl Val+0       ; Shift a bit out of the binary
+            rol Val+1       ; ... value
+            lda Res+0       ; And add it into the result, doubling
+            adc Res+0       ; ... it at the same time
+            sta Res+0
+            lda Res+1
+            adc Res+1
+            sta Res+1
+            lda Res+2
+            adc Res+2
+            sta Res+2
+            dex             ; More bits to process?
+            bne @loop
+            cld             ; Leave decimal mode
+            rts
 ; https://codebase64.org/doku.php?id=base:16bit_addition_and_subtraction
 ; 16 bit add
 add:  
@@ -304,6 +338,8 @@ ClearBuff:
             sta PieceBuff, X          
             bne @loop_x
             rts
+
+
 
 
 ; Unpack the encoded piece with not roation
