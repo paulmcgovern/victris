@@ -34,7 +34,17 @@ BORDER_REG = $900F      ; Screen background and border register
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 LAST_ROW = $1FE4        ; Start of last row of screen memory
-SCORE_SCREEN = $1E25     ; Location of score text on screen
+SCORE_SCREEN = $1E25    ; Location of score text on screen
+GETIN = $FFE4           ; Kernal function to get keyboard input
+CHAR_LEFT = $41         ; Move left 'A'
+CHAR_RIGHT = $44        ; Move right 'D'
+CHAR_ROTATE = $53       ; Rotate 'S'
+CHAR_DROP =  $20        ; Drop piece: space
+
+MOVE_ROTATE = $01       ; Flag to indicate piece should rotate
+MOVE_DROP   = $02       ; Flag to indicate piece should drop
+MOVE_LEFT   = $04       ; Flag to indicate piece should move left
+MOVE_RIGHT  = $08       ; Flag to indicate piece should move right
 
 .segment "RODATA"
 
@@ -88,6 +98,10 @@ Score:          .res 2      ; Current score
 TextPtr:        .res 2      ; Pointer to text. Read by PrintString
 ScoreScnPtr:    .res 2      ; Pointer to score on screen
 
+MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
+
+
+
 ; BCD stuff
 Res:            .res 3      ; 24 bit BVD encoded score
 Val :           .res 2      ; Work vars for BCD encoding
@@ -140,9 +154,14 @@ main:
             sta ScoreScnPtr + 1
 
 @game:
+            lda #$00
+            sta IsCollision         ; Clear collision flag
+            sta MoveFlag            ; Clear movement and rotation flags
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
             jsr GetRandPiece        ; Pick a random piece
-            jsr unpack000           ; Unpack the current piece to the buffer
+
+            jsr unpack000           ; Unpack the current piece to the buffer with no rotation
+
 
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
@@ -150,12 +169,17 @@ main:
             sta PieceLoc + 1
 
 @move_piece:
-            lda #BLOCK_CH            ; Character to draw the piece
+
+            jsr GetInput            ; Get user input: left, right, rotate, or drop.
+                                    ; Set MoveFlag if any input set.
+lda MoveFlag
+sta SCREEN
+            lda #BLOCK_CH           ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
             lda COLORS, X            
             sta CurColor
-      
+      ; handle rotation here?
             jsr drawBuff            ; Draw the piece that is in the buffer
 
             jsr Delay
@@ -173,16 +197,32 @@ main:
 
             jsr drawBuff
 
-            lda PieceLoc            ; Advance
-            sta num1lo
+            lda PieceLoc            ; Advance to next line. Set up
+            sta num1lo              ; addition acording to movement flag
             lda PieceLoc + 1
             sta num1hi
 
-            lda #SCREEN_WIDTH
-            sta num2lo
+@left:      lda #MOVE_LEFT          ; Move piece left
+            and MoveFlag
+            beq @right
+            eor MoveFlag            ; Clear flag
+            sta MoveFlag
+            lda #(SCREEN_WIDTH - 1) ; Move to left
+            jmp @add
+
+@right:     lda #MOVE_RIGHT         ; Move piece right
+            and MoveFlag
+            beq @default
+            eor MoveFlag            ; Clear flag
+            sta MoveFlag            
+            lda #(SCREEN_WIDTH + 1) ; Move to the right
+            jmp @add
+
+@default:   lda #SCREEN_WIDTH       ; Default: advance to next line with no left/right movement
+
+@add:       sta num2lo
             lda #$00
             sta num2hi
-
             jsr add
 
             lda reslo
@@ -198,8 +238,18 @@ foo:        clc
             bcc foo
 
 ; Y is the govenor of the delay
-Delay:      ldx #$FF
-            ldy #$A0 
+; If the drop flag is set on ActioFlag, do not loop.
+Delay:
+
+lda MoveFlag
+sta SCREEN
+            lda #MOVE_DROP
+            and MoveFlag
+            beq @no_drop
+            rts
+@no_drop:
+            ldx #$FF            
+            ldy #$A0 ; TODO: decrement by current level
 @loop:      dex
             bne @loop
             dey
@@ -480,6 +530,44 @@ drawBuff:
             bne @loop_draw
             rts
 
+
+; Get user input. Piece can be move one
+; square left or right.
+; Gets input with Kernel function GETIN $FFE4.
+; Increments or decrements PieceLoc by one.
+; If spece was pressed, set is falling flag.
+; If rotate set set rotation flag.
+GetInput:
+            jsr GETIN
+            bne @rotate
+            rts                      ; A is zero if no input read
+
+@rotate:    cmp #CHAR_ROTATE        ; Set rotate flag.
+            bne @drop
+            lda #MOVE_ROTATE
+            jmp @done
+
+
+@drop:      cmp #CHAR_DROP          ; Set DropFlag
+            bne @left
+            lda #MOVE_DROP
+            jmp @done
+
+@left:      cmp #CHAR_LEFT          ; Move to left
+            bne @right
+            lda #MOVE_LEFT
+            jmp @done
+
+@right:     cmp #CHAR_RIGHT         ; Move to right
+            bne @default           
+            lda #MOVE_RIGHT
+            jmp @done
+@default:
+            rts
+
+@done:      sta MoveFlag
+            rts
+
 ; Compare the buffer with
 ; non space characters
 ; Sets or clears IsCollision
@@ -492,13 +580,15 @@ CheckCollision:
             cmp #<LAST_ROW
             bcc @above_last
 
-            lda #$01
+            lda #$01                ; Set collision flag
             sta IsCollision
             rts
 
-@above_last:lda #$00
-            sta IsCollision
+@above_last:lda #$00                ; Clear collision flag
+            sta IsCollision        
             rts
+
+
 
 ; check bottom of piece.
 
