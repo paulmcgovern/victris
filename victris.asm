@@ -571,6 +571,7 @@ GetInput:
 ; Compare the buffer with
 ; non space characters
 ; Sets or clears IsCollision
+; Checks the bottom of the piece
 CheckCollision:
        
             lda PieceLoc + 1        ; Check if on bottom row of board
@@ -585,10 +586,42 @@ CheckCollision:
             rts
 
 @above_last:lda #$00                ; Clear collision flag
-            sta IsCollision        
+            sta IsCollision  
+
+            lda PieceLoc            ; Get current piece location, but 
+            sta num1lo              ; advance it to the next row
+            lda PieceLoc + 1        
+            sta num1hi
+            lda #SCREEN_WIDTH 
+            sta num2lo
+            lda #$00
+            sta num2hi
+            jsr add                 ; Result in reslo: points to next row down
+       
+       
+            ldx #(BUFF_LEN - 1)
+            ldy #$03
+
+@loop_row:  lda PieceBuff, X       ; Get piece
+         
+            and #$FF                ; If buffer at position is blank               
+            beq @skip               ; do not compare with other pieces
+
+            lda #SPACE_CH           ; If the position on the screen is
+            cmp (reslo), Y          ; not a space, a collision will occur
+            bne @collision
+           
+@skip:      nop  
+            dex
+            dey
+            bpl @loop_row
+
+            lda #$00
+            sta IsCollision
+            rts
+@collision:
+            lda #$FF
+            sta IsCollision
             rts
 
-
-
-; check bottom of piece.
 
