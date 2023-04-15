@@ -84,7 +84,7 @@ TXT_START:      scrcode "press any key@"
 
 
 CurPieceIdx:    .res 1      ; Currently active piece
-PieceEdge:      .res 1      ; Index into buffer of the edge of a piee.
+BuffColBlocks:   .res 1      ; Set when piece buffer column has a block.
 ;RotState:       .res 1      ; Orientation of the active piece
 
 PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
@@ -418,7 +418,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-lda #$03
+lda #$01
 ;RRRRRR
             sta CurPieceIdx
             rts
@@ -587,11 +587,11 @@ CheckCollision:
             rts
 
 @chk_edge_setup:
-lda #BLOCK_CH
-sta $1F54
+;lda #BLOCK_CH
+;sta $1F54
             ; Get bottom edge of piece
-            lda #NOT_SEEN ; TODO: change flag to be 0 for not present
-            sta PieceEdge            
+            lda #$00 ;#NOT_SEEN ; TODO: change flag to be 0 for not present
+            sta BuffColBlocks ; PieceEdge            
 
             lda #$00
             sta IsCollision
@@ -642,8 +642,10 @@ sta $1F54
             and PieceBuff, X
 
             beq @buff_clear
-            txa                     ; Save the index where we saw the piece.
-            sta PieceEdge
+            ;txa                     ; Save the index where we saw the piece.
+            ;sta PieceEdge
+            lda #$FF
+            sta BuffColBlocks
 
             lda DrawPtrLo
             sta CollisionPtr        ; Save screen position 
@@ -669,8 +671,10 @@ sta $1F54
             bne @loop_x     
 
             ; Was anything seen in the column? If PieceEdge is set to $FF the column was empty
-            lda #NOT_SEEN
-            eor PieceEdge
+            ;lda #NOT_SEEN
+            ;eor PieceEdge
+            ;beq @skip
+            lda BuffColBlocks
             beq @skip
 
             lda #SPACE_CH                   ; If the position on the screen is
