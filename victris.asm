@@ -14,32 +14,33 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-;.debuginfo on
+.debuginfo on
 .macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
-COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
+BORDER_REG = $900F      ; Screen background and border register
+BLOCK_CH = $A0          ; Block charater: reverse space
 BOARD_LEFT = $76        ; Left border character  
 BOARD_RIGHT = $75       ; Right border character
-BLOCK_CH = $A0          ; Block charater: reverse space
-BUFF_LEN = $10          ; Length of buffer of rendered piece in bytes: 16
-LEFT_MARGIN = $04       ; Screen splace left of board
 BOARD_WIDTH = $0A       ; Width of board. 10 characters.
-SCREEN_WIDTH = $16      ; Default screen width, in bytes: 22
-SCREEN_HEIGHT = $17     ; Default screen height, in bytes: 23
-SPACE_CH = $20          ; Space chracter
-WHITE = $01             ; Color code for white
-LTBLUE_BLK = $E8        ; Screen: black border and light blue background
-BORDER_REG = $900F      ; Screen background and border register
-INITIAL_POS = $1E4A     ; Initial location of lower right of piece
-CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
-LAST_ROW = $1FE4        ; Start of last row of screen memory
-SCORE_SCREEN = $1E25    ; Location of score text on screen
-GETIN = $FFE4           ; Kernal function to get keyboard input
+BUFF_LEN = $10          ; Length of buffer of rendered piece in bytes: 16
+CHAR_DROP =  $20        ; Drop piece: space
 CHAR_LEFT = $41         ; Move left 'A'
 CHAR_RIGHT = $44        ; Move right 'D'
 CHAR_ROTATE = $53       ; Rotate 'S'
-CHAR_DROP =  $20        ; Drop piece: space
+CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
+COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
+GETIN = $FFE4           ; Kernal function to get keyboard input
+INITIAL_POS = $1E4A     ; Initial location of lower right of piece
+LAST_ROW = $1FE4        ; Start of last row of screen memory
+LEFT_MARGIN = $04       ; Screen splace left of board
+LTBLUE_BLK = $E8        ; Screen: black border and light blue background
+NOT_SEEN = $FF          ; Flag value used in finding edge of piece
+SCORE_SCREEN = $1E25    ; Location of score text on screen
+SCREEN_HEIGHT = $17     ; Default screen height, in bytes: 23
+SCREEN_WIDTH = $16      ; Default screen width, in bytes: 22
+SPACE_CH = $20          ; Space chracter
+WHITE = $01             ; Color code for white
 
 MOVE_ROTATE = $01       ; Flag to indicate piece should rotate
 MOVE_DROP   = $02       ; Flag to indicate piece should drop
@@ -54,7 +55,7 @@ PIECES:
     .res 1, %00001111   ; I $0F
     .res 1, %10001110   ; J $8E
     .res 1, %11001100   ; O $CC
-    .res 1, %00010111   ; L $1E
+    .res 1, %00101110   ; L $1E
     .res 1, %01101100   ; S $6C
     .res 1, %11000110   ; Z $C6
 
@@ -81,7 +82,9 @@ TXT_START:      scrcode "press any key@"
 
 
 CurPieceIdx:    .res 1      ; Currently active piece
-RotState:       .res 1      ; Orientation of the active piece
+PieceEdge:      .res 1      ; Index into buffer of the edge of a piee.
+;RotState:       .res 1      ; Orientation of the active piece
+
 PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
 
 DrawPtrLo:      .res 1      ; Low byte of screen pointer
@@ -97,10 +100,10 @@ seed:           .res 1      ; Generated random number.
 Score:          .res 2      ; Current score
 TextPtr:        .res 2      ; Pointer to text. Read by PrintString
 ScoreScnPtr:    .res 2      ; Pointer to score on screen
-
+RotState:       .res 1      ; Orientation of the active piece
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
 
-
+Bork:           .res 2
 
 ; BCD stuff
 Res:            .res 3      ; 24 bit BVD encoded score
@@ -172,8 +175,7 @@ main:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
                                     ; Set MoveFlag if any input set.
-lda MoveFlag
-sta SCREEN
+
             lda #BLOCK_CH           ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
@@ -241,8 +243,6 @@ foo:        clc
 ; If the drop flag is set on ActioFlag, do not loop.
 Delay:
 
-lda MoveFlag
-sta SCREEN
             lda #MOVE_DROP
             and MoveFlag
             beq @no_drop
@@ -400,7 +400,7 @@ IncScore:
 @skip:      jsr Bin2BCD
             rts
 
-; Pick a random piece. 
+; Pick a random piece.
 ; https://codebase64.org/doku.php?id=base:small_fast_8-bit_prng
 GetRandPiece:
 
@@ -415,7 +415,8 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-
+;lda #$04
+;RRRRRR
             sta CurPieceIdx
             rts
 
@@ -462,7 +463,7 @@ unpack000:
 ; character location.
 drawBuff:
             lda #PieceBuff + 16 ; End of unpacked piece buffer
-            sta BuffPtr
+            sta BuffPtr ; TODO: is BuffPtr variable required?
 
             lda PieceLoc            ; Copy current location to working poitner
             sta DrawPtrLo
@@ -568,60 +569,93 @@ GetInput:
 @done:      sta MoveFlag
             rts
 
-; Compare the buffer with
-; non space characters
-; Sets or clears IsCollision
-; Checks the bottom of the piece
+
 CheckCollision:
-       
+
             lda PieceLoc + 1        ; Check if on bottom row of board
             cmp #>LAST_ROW          ; 16 bit comparison with beginning of
-            bne @above_last         ; last row of screen. 
+            bne @chk_edge           ; last row of screen. 
             lda PieceLoc
             cmp #<LAST_ROW
-            bcc @above_last
+            bcc @chk_edge
 
-            lda #$01                ; Set collision flag
+            lda #$FF                ; Set collision flag
             sta IsCollision
             rts
 
-@above_last:lda #$00                ; Clear collision flag
-            sta IsCollision  
+            ; Get bottom edge of piece
+            lda #NOT_SEEN
+            sta PieceEdge
 
-            lda PieceLoc            ; Get current piece location, but 
-            sta num1lo              ; advance it to the next row
-            lda PieceLoc + 1        
-            sta num1hi
-            lda #SCREEN_WIDTH 
+@chk_edge:  lda #$00                ; Clear pointer to screen item
+            sta Bork
+            sta Bork + 1
+
+            lda PieceLoc            ; Get a pointer to the TOP of the
+            sta num1lo              ; piece on screen. This pointer
+            lda PieceLoc + 1        ; will be maintained as the loop
+            sta num1hi              ; steps though the piece buffer.
+            lda #(SCREEN_WIDTH * 2) ; Shifted down to next row.
+            sta num2lo
+            lda #00
+            sta num2hi
+            jsr sub
+            lda reslo
+            sta DrawPtrLo
+            lda reshi
+            sta DrawPtrHi
+
+            lda #SCREEN_WIDTH       ; Setup for more maintaining of DrawPtrLo
             sta num2lo
             lda #$00
             sta num2hi
-            jsr add                 ; Result in reslo: points to next row down
-       
-       
-            ldx #(BUFF_LEN - 1)
-            ldy #$03
 
-@loop_row:  lda PieceBuff, X       ; Get piece
-         
-            and #$FF                ; If buffer at position is blank               
-            beq @skip               ; do not compare with other pieces
+            ldx #$00                ; Offet into piece buffer
+            ldy #$04                ; Once for each row of buffer           
+
+@loop_x:    lda #$FF
+            and PieceBuff, X
+
+            beq @not_set
+            txa                     ; Save the index where we saw the piece.
+            sta PieceEdge
+
+            lda DrawPtrLo
+            sta Bork                ; Save screen position 
+            lda DrawPtrHi
+            sta Bork + 1
+
+@not_set:   lda DrawPtrLo    ; Update screen pointer to next row
+            sta num1lo
+            lda DrawPtrHi
+            sta num1hi
+            jsr add
+            lda reslo
+            sta DrawPtrLo
+            lda reshi
+            sta DrawPtrHi
+
+            txa
+            clc
+            adc #$04    ; next row in column
+            tax
+            dey
+            bne @loop_x     
+
+            ; Was anything seen in the column? If PieceEdge is set to $FF the column was empty
+            lda #NOT_SEEN
+            eor PieceEdge
+            beq @skip
 
             lda #SPACE_CH           ; If the position on the screen is
-            cmp (reslo), Y          ; not a space, a collision will occur
+            cmp (Bork), Y          ; not a space, a collision will occur
             bne @collision
            
-@skip:      nop  
-            dex
-            dey
-            bpl @loop_row
-
-            lda #$00
+@skip:      lda #$00
             sta IsCollision
             rts
 @collision:
             lda #$FF
             sta IsCollision
             rts
-
 
