@@ -23,7 +23,9 @@ BLOCK_CH = $A0          ; Block charater: reverse space
 BOARD_LEFT = $76        ; Left border character  
 BOARD_RIGHT = $75       ; Right border character
 BOARD_WIDTH = $0A       ; Width of board. 10 characters.
+BUFF_COLS = $04         ; Four columns in piece buffer
 BUFF_LEN = $10          ; Length of buffer of rendered piece in bytes: 16
+BUFF_ROWS = $04         ; Four rows in piece buffer
 CHAR_DROP =  $20        ; Drop piece: space
 CHAR_LEFT = $41         ; Move left 'A'
 CHAR_RIGHT = $44        ; Move right 'D'
@@ -103,8 +105,9 @@ ScoreScnPtr:    .res 2      ; Pointer to score on screen
 RotState:       .res 1      ; Orientation of the active piece
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
 
-Bork:           .res 2
-
+CollisionPtr:           .res 2
+XIDX: .res 1
+YIDX: .res 1
 ; BCD stuff
 Res:            .res 3      ; 24 bit BVD encoded score
 Val :           .res 2      ; Work vars for BCD encoding
@@ -415,7 +418,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-;lda #$04
+lda #$03
 ;RRRRRR
             sta CurPieceIdx
             rts
@@ -574,22 +577,31 @@ CheckCollision:
 
             lda PieceLoc + 1        ; Check if on bottom row of board
             cmp #>LAST_ROW          ; 16 bit comparison with beginning of
-            bne @chk_edge           ; last row of screen. 
+            bne @chk_edge_setup           ; last row of screen. 
             lda PieceLoc
             cmp #<LAST_ROW
-            bcc @chk_edge
+            bcc @chk_edge_setup
 
             lda #$FF                ; Set collision flag
             sta IsCollision
             rts
 
+@chk_edge_setup:
+lda #BLOCK_CH
+sta $1F54
             ; Get bottom edge of piece
-            lda #NOT_SEEN
-            sta PieceEdge
+            lda #NOT_SEEN ; TODO: change flag to be 0 for not present
+            sta PieceEdge            
+
+            lda #$00
+            sta IsCollision
+            lda #$00
+            sta XIDX 
+            sta YIDX 
 
 @chk_edge:  lda #$00                ; Clear pointer to screen item
-            sta Bork
-            sta Bork + 1
+            sta CollisionPtr
+            sta CollisionPtr + 1
 
             lda PieceLoc            ; Get a pointer to the TOP of the
             sta num1lo              ; piece on screen. This pointer
@@ -600,32 +612,46 @@ CheckCollision:
             lda #00
             sta num2hi
             jsr sub
-            lda reslo
+            lda reslo               ; Save result to draw pointer
             sta DrawPtrLo
             lda reshi
             sta DrawPtrHi
+
+            lda YIDX                ; Adjust to column 0 - 3
+            clc
+            adc DrawPtrLo
+            sta DrawPtrLo
+            bcc @no_carry
+            inc DrawPtrHi
+
+@no_carry:
+
 
             lda #SCREEN_WIDTH       ; Setup for more maintaining of DrawPtrLo
             sta num2lo
             lda #$00
             sta num2hi
 
-            ldx #$00                ; Offet into piece buffer
-            ldy #$04                ; Once for each row of buffer           
+            ;ldx #$00                ; Offet into piece buffer
+            lda XIDX
+            tax
 
-@loop_x:    lda #$FF
+            ldy #BUFF_ROWS                ; Once for each row of buffer           
+
+@loop_x:    lda #$FF                ; Check if byte in buffer is set
             and PieceBuff, X
 
-            beq @not_set
+            beq @buff_clear
             txa                     ; Save the index where we saw the piece.
             sta PieceEdge
 
             lda DrawPtrLo
-            sta Bork                ; Save screen position 
+            sta CollisionPtr        ; Save screen position 
             lda DrawPtrHi
-            sta Bork + 1
+            sta CollisionPtr + 1
 
-@not_set:   lda DrawPtrLo    ; Update screen pointer to next row
+@buff_clear:
+            lda DrawPtrLo           ; Update screen pointer to next row
             sta num1lo
             lda DrawPtrHi
             sta num1hi
@@ -635,9 +661,9 @@ CheckCollision:
             lda reshi
             sta DrawPtrHi
 
-            txa
+            txa                 ; Increment X to the next 
             clc
-            adc #$04    ; next row in column
+            adc #BUFF_COLS
             tax
             dey
             bne @loop_x     
@@ -647,10 +673,22 @@ CheckCollision:
             eor PieceEdge
             beq @skip
 
-            lda #SPACE_CH           ; If the position on the screen is
-            cmp (Bork), Y          ; not a space, a collision will occur
+            lda #SPACE_CH                   ; If the position on the screen is
+            cmp (CollisionPtr), Y           ; not a space, a collision will occur
             bne @collision
            
+            lda #(BUFF_COLS - 1)
+            cmp YIDX
+            beq @skip
+            inc YIDX
+           
+            lda YIDX
+            sta SCREEN
+            lda XIDX
+            sta SCREEN + 1
+
+            jmp @chk_edge
+
 @skip:      lda #$00
             sta IsCollision
             rts
