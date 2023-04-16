@@ -100,11 +100,16 @@ TextPtr:        .res 2      ; Pointer to text. Read by PrintString
 ScoreScnPtr:    .res 2      ; Pointer to score on screen
 BuffColBlocks:  .res 1      ; Set when piece buffer column has a block.
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
+RotCol:         .res 1      ; Housekeeping variable in buffer rotaiton routine
+
 
 CollisionPtr:   .res 2
 
-XIDX: .res 1
+XIDX: .res 1    ; TODO: consolidate XIDX and YIDX into one *or* use registers.
 YIDX: .res 1
+
+
+
 ; BCD stuff
 Res:            .res 3      ; 24 bit BVD encoded score
 Val :           .res 2      ; Work vars for BCD encoding
@@ -161,10 +166,37 @@ main:
             sta IsCollision         ; Clear collision flag
             sta MoveFlag            ; Clear movement and rotation flags
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
+
+
+            ;lda #$01
+            ;sta PieceBuff
+            ;lda #$02
+            ;sta PieceBuff + 4
+            ;lda #$03
+            ;sta PieceBuff + 8 
+            ;lda #$04                  
+            ;sta PieceBuff + 12
+
+;            ldx #BUFF_LEN            
+;@loop_x:    dex 
+ ;           txa
+ ;           sta PieceBuff, X          
+ ;           bne @loop_x
+         
+
+
+
+
+
+
             jsr GetRandPiece        ; Pick a random piece
 
             jsr unpack000           ; Unpack the current piece to the buffer with no rotation
 
+            jsr rotateCw
+
+;@w: nop
+;jmp @w
 
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
@@ -433,12 +465,14 @@ ClearBuff:
 
 
 
-; Unpack the encoded piece with not roation
+; Unpack the encoded piece with no roation
 ; to the piece buffer.
 ; Start with lsb and write to end of buffer
 ; Assumes buffer has ben cleared 
 ; Looks up current piece by CurPieceIdx
 ; and writes FF for each set bit.
+; 0 1 2 3
+; 4 5 6 7
 unpack000:          
             ldx CurPieceIdx     ; Lookup current piece
             lda PIECES, X
@@ -453,6 +487,45 @@ unpack000:
             pla           
 @skip:      dex
             bne @loop
+            rts
+
+; Rotates piece buffer clockwise, 90 degrees.
+; Steps throught the buffer in the desired order
+; and writes buffer content to the stack.
+; Then reads from the stack back to the buffer.
+rotateCw:           
+            lda #$0C ; Last row, first column
+            sta RotCol
+
+@loop_col:  lda RotCol  ; rotCol contains start positoin
+            tax
+
+@start_col: ldy #BUFF_ROWS ; 4 rows
+
+@loop_row:  lda PieceBuff, X
+            
+            pha
+
+            txa
+            sec		
+            sbc #$04
+            tax
+
+            dey
+            bne @loop_row
+
+            inc RotCol
+            lda #$0F
+            cmp RotCol
+            bpl @loop_col
+
+            ldx #BUFF_LEN - 1       ; Set up for writeing from stack to buffer 
+@rewrite:   pla    
+            
+            sta PieceBuff, X
+            dex
+            bpl @rewrite
+
             rts
 
 ; Draw the piece buffer, starting from the
@@ -610,7 +683,7 @@ CheckCollision:
             lda reshi
             sta DrawPtrHi
 
-            lda YIDX                ; Adjust to column 0 - 3
+            lda YIDX                ; Adjust start to column 0 - 3
             clc
             adc DrawPtrLo
             sta DrawPtrLo
