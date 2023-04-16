@@ -14,7 +14,7 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-.debuginfo on
+;.debuginfo on
 .macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
@@ -84,15 +84,11 @@ TXT_START:      scrcode "press any key@"
 
 
 CurPieceIdx:    .res 1      ; Currently active piece
-BuffColBlocks:   .res 1      ; Set when piece buffer column has a block.
-;RotState:       .res 1      ; Orientation of the active piece
-
+RotState:       .res 1      ; Orientation of the active piece
 PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
-
 DrawPtrLo:      .res 1      ; Low byte of screen pointer
 DrawPtrHi:      .res 1      ; High byte of screen pointer
 DrawIndex:      .res 1      ; Inexing variable
-
 PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on screen.
 CurChar:        .res 1      ; Current output character. Read by DrawBuff
 CurColor:       .res 1      ; Color of current character. Read by DrawBuff
@@ -102,10 +98,11 @@ seed:           .res 1      ; Generated random number.
 Score:          .res 2      ; Current score
 TextPtr:        .res 2      ; Pointer to text. Read by PrintString
 ScoreScnPtr:    .res 2      ; Pointer to score on screen
-RotState:       .res 1      ; Orientation of the active piece
+BuffColBlocks:  .res 1      ; Set when piece buffer column has a block.
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
 
-CollisionPtr:           .res 2
+CollisionPtr:   .res 2
+
 XIDX: .res 1
 YIDX: .res 1
 ; BCD stuff
@@ -418,7 +415,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-lda #$01
+;lda #$02
 ;RRRRRR
             sta CurPieceIdx
             rts
@@ -587,11 +584,6 @@ CheckCollision:
             rts
 
 @chk_edge_setup:
-;lda #BLOCK_CH
-;sta $1F54
-            ; Get bottom edge of piece
-            lda #$00 ;#NOT_SEEN ; TODO: change flag to be 0 for not present
-            sta BuffColBlocks ; PieceEdge            
 
             lda #$00
             sta IsCollision
@@ -602,6 +594,7 @@ CheckCollision:
 @chk_edge:  lda #$00                ; Clear pointer to screen item
             sta CollisionPtr
             sta CollisionPtr + 1
+            sta BuffColBlocks       ; Clear "column has blocks" flag
 
             lda PieceLoc            ; Get a pointer to the TOP of the
             sta num1lo              ; piece on screen. This pointer
@@ -626,29 +619,24 @@ CheckCollision:
 
 @no_carry:
 
-
             lda #SCREEN_WIDTH       ; Setup for more maintaining of DrawPtrLo
             sta num2lo
             lda #$00
             sta num2hi
 
-            ;ldx #$00                ; Offet into piece buffer
-            lda XIDX
+            lda XIDX                ; Offset into piece buffer
             tax
 
-            ldy #BUFF_ROWS                ; Once for each row of buffer           
+            ldy #BUFF_ROWS          ; Once for each row of buffer           
 
-@loop_x:    lda #$FF                ; Check if byte in buffer is set
+@loop_x: 
+            lda #$FF                ; Check if byte in buffer is set
             and PieceBuff, X
+            beq @buff_clear 
+            sta BuffColBlocks       ; Set "Column has block" flag
 
-            beq @buff_clear
-            ;txa                     ; Save the index where we saw the piece.
-            ;sta PieceEdge
-            lda #$FF
-            sta BuffColBlocks
-
-            lda DrawPtrLo
-            sta CollisionPtr        ; Save screen position 
+            lda DrawPtrLo           ; Save screen position of the buffer block
+            sta CollisionPtr        
             lda DrawPtrHi
             sta CollisionPtr + 1
 
@@ -663,33 +651,25 @@ CheckCollision:
             lda reshi
             sta DrawPtrHi
 
-            txa                 ; Increment X to the next 
+            txa                     ; Increment X to the next row.
             clc
             adc #BUFF_COLS
             tax
             dey
             bne @loop_x     
 
-            ; Was anything seen in the column? If PieceEdge is set to $FF the column was empty
-            ;lda #NOT_SEEN
-            ;eor PieceEdge
-            ;beq @skip
-            lda BuffColBlocks
+            lda BuffColBlocks       ; Does the column contain a block?
             beq @skip
 
-            lda #SPACE_CH                   ; If the position on the screen is
-            cmp (CollisionPtr), Y           ; not a space, a collision will occur
+            lda #SPACE_CH           ; If the position on the screen is
+            cmp (CollisionPtr), Y   ; not a space, a collision will occur
             bne @collision
            
             lda #(BUFF_COLS - 1)
             cmp YIDX
             beq @skip
-            inc YIDX
-           
-            lda YIDX
-            sta SCREEN
-            lda XIDX
-            sta SCREEN + 1
+            inc YIDX           
+            inc XIDX
 
             jmp @chk_edge
 
