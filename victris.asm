@@ -168,35 +168,11 @@ main:
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
 
 
-            ;lda #$01
-            ;sta PieceBuff
-            ;lda #$02
-            ;sta PieceBuff + 4
-            ;lda #$03
-            ;sta PieceBuff + 8 
-            ;lda #$04                  
-            ;sta PieceBuff + 12
-
-;            ldx #BUFF_LEN            
-;@loop_x:    dex 
- ;           txa
- ;           sta PieceBuff, X          
- ;           bne @loop_x
-         
-
-
-
-
-
-
             jsr GetRandPiece        ; Pick a random piece
 
             jsr unpack000           ; Unpack the current piece to the buffer with no rotation
 
-            jsr rotateCw
-
-;@w: nop
-;jmp @w
+      ;      jsr rotateCw
 
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
@@ -207,6 +183,17 @@ main:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
                                     ; Set MoveFlag if any input set.
+
+            lda #MOVE_ROTATE         ; Was a rotation requested?
+            and MoveFlag
+            beq @no_rotate
+            lda #$00
+            sta MoveFlag
+            jsr rotateCw
+
+            
+
+@no_rotate:
 
             lda #BLOCK_CH           ; Character to draw the piece
             sta CurChar
@@ -281,7 +268,7 @@ Delay:
             rts
 @no_drop:
             ldx #$FF            
-            ldy #$A0 ; TODO: decrement by current level
+            ldy #$FF ; TODO: decrement by current level
 @loop:      dex
             bne @loop
             dey
@@ -605,22 +592,19 @@ drawBuff:
             rts
 
 
-; Get user input. Piece can be move one
-; square left or right.
+; Get user input. Piece can be moved one
+; square left or right, rotated, or dropped.
 ; Gets input with Kernel function GETIN $FFE4.
-; Increments or decrements PieceLoc by one.
-; If spece was pressed, set is falling flag.
-; If rotate set set rotation flag.
+; Sets apropriate flag on MoveFlag.
 GetInput:
-            jsr GETIN
+            jsr GETIN               ; A is zero if no input read
             bne @rotate
-            rts                      ; A is zero if no input read
+            rts                      
 
 @rotate:    cmp #CHAR_ROTATE        ; Set rotate flag.
             bne @drop
             lda #MOVE_ROTATE
             jmp @done
-
 
 @drop:      cmp #CHAR_DROP          ; Set DropFlag
             bne @left
@@ -636,7 +620,7 @@ GetInput:
             bne @default           
             lda #MOVE_RIGHT
             jmp @done
-@default:
+@default:                           ; Default: do nothing
             rts
 
 @done:      sta MoveFlag
