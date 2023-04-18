@@ -14,7 +14,7 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-;.debuginfo on
+.debuginfo on
 .macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
@@ -171,9 +171,7 @@ main:
             jsr GetRandPiece        ; Pick a random piece
 
             jsr unpack000           ; Unpack the current piece to the buffer with no rotation
-
-      ;      jsr rotateCw
-
+ 
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
             lda #>INITIAL_POS
@@ -434,8 +432,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-;lda #$02
-;RRRRRR
+
             sta CurPieceIdx
             rts
 
@@ -513,7 +510,61 @@ rotateCw:
             dex
             bpl @rewrite
 
-            rts
+; "lower" the piece into the bottom last corner
+
+@shift_rows_down:
+            lda #$00
+            sta XIDX            ; Set when bottom row has a block
+
+            ldy #BUFF_COLS
+            ldx #BUFF_LEN - 1
+
+@loop_y:    lda PieceBuff, X
+            beq @clear
+            sta XIDX              ; TODO: if A is set, break
+
+@clear:     dex
+            dey            
+            bne @loop_y
+         
+            lda XIDX
+            bne @done
+
+            ldy #$00
+            ldx #((BUFF_COLS * 3) - 1) ; End of third row
+
+@shift_row:                         ; Shift rows down
+            txa
+            clc
+            adc #BUFF_COLS
+            tay
+            lda PieceBuff, X
+            sta PieceBuff, Y
+
+            dex
+            bpl @shift_row
+
+            lda #$00
+            ldx #BUFF_COLS - 1
+
+@fill_row:  lda #$00                ; FIll top row with zeroes
+            sta PieceBuff, X
+            dex
+            bpl @fill_row
+
+
+            lda PieceBuff + $0D     ; Is anoter round of lowering required? Check byte
+            beq @shift_rows_down    ; at lower left of buffer
+
+@done:      rts
+
+; If XIDX is not set, shift everything down by 4
+          
+;@done:  nop
+
+;@sf: nop
+;jmp @sf
+;    rts
 
 ; Draw the piece buffer, starting from the
 ; bottom right. Draw the piece if the given 
