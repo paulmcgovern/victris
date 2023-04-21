@@ -14,7 +14,7 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-.debuginfo on
+;.debuginfo on
 .macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
@@ -171,7 +171,7 @@ main:
             jsr GetRandPiece        ; Pick a random piece
 
             jsr unpack000           ; Unpack the current piece to the buffer with no rotation
- 
+
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
             lda #>INITIAL_POS
@@ -203,7 +203,7 @@ main:
 
             jsr Delay
 
-            jsr CheckCollision
+            jsr CheckCollision      ; Check if piece can continue downward
 
             lda #$FF
             and IsCollision
@@ -216,15 +216,17 @@ main:
 
             jsr drawBuff
 
-            lda PieceLoc            ; Advance to next line. Set up
-            sta num1lo              ; addition acording to movement flag
-            lda PieceLoc + 1
-            sta num1hi
-
 @left:      lda #MOVE_LEFT          ; Move piece left
             and MoveFlag
             beq @right
             eor MoveFlag            ; Clear flag
+
+            ; Check can move piece left
+            ; br to 'default' if not
+            jsr checkCollideLeft    ; Sets IsCollision
+            lda IsCollision
+            bne @default ; TODO: Clear IsCollision flag
+
             sta MoveFlag
             lda #(SCREEN_WIDTH - 1) ; Move to left
             jmp @add
@@ -237,11 +239,18 @@ main:
             lda #(SCREEN_WIDTH + 1) ; Move to the right
             jmp @add
 
-@default:   lda #SCREEN_WIDTH       ; Default: advance to next line with no left/right movement
+@default:   lda #$00                ; May have been set in left/right collide check, above.
+            sta IsCollision
 
-@add:       sta num2lo
+            lda #SCREEN_WIDTH       ; Default: advance to next line with no left/right movement
+
+@add:       sta num2lo              ; A set to some value depending on movement, set above
             lda #$00
             sta num2hi
+            lda PieceLoc            ; Advance to next line. Set up
+            sta num1lo              ; addition acording to movement flag
+            lda PieceLoc + 1
+            sta num1hi            
             jsr add
 
             lda reslo
@@ -253,8 +262,6 @@ main:
 
             jmp @move_piece
 
-foo:        clc
-            bcc foo
 
 ; Y is the govenor of the delay
 ; If the drop flag is set on ActioFlag, do not loop.
@@ -420,7 +427,7 @@ IncScore:
 ; Pick a random piece.
 ; https://codebase64.org/doku.php?id=base:small_fast_8-bit_prng
 GetRandPiece:
-
+; TODO: just get low bit from $
             lda seed
             beq @doEor
             asl
@@ -432,7 +439,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-
+;lda #$01
             sta CurPieceIdx
             rts
 
@@ -789,3 +796,74 @@ CheckCollision:
             sta IsCollision
             rts
 
+
+checkCollideLeft:
+
+            lda PieceLoc            ; Copy current location to working poitner,
+            sta num1lo              ; but one position to the left (lower)
+            lda PieceLoc + 1
+            sta num1hi
+
+            lda #$01
+            sta num2lo
+            lda #$00
+            sta num2hi
+            jsr sub
+
+            lda reslo
+            sta CollisionPtr
+            lda reshi
+            sta CollisionPtr + 1
+
+            lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
+            sta num2lo
+            lda #$00
+            sta num2hi
+
+            ldy #BUFF_ROWS          ; Y is row counter
+            ldx #(BUFF_COLS * 3)    ; Start of last row
+
+@loop_y:
+            lda PieceBuff, X
+
+            beq @skip_compare       ; Block defined at location in buff?
+
+            tya                     ; Save Y
+            pha
+            ldy #$00
+            lda (CollisionPtr), Y
+            cmp #SPACE_CH
+            bne @collision
+
+            pla                     ; Restore Y
+            tay
+
+ @skip_compare:
+            dey
+            beq @done
+
+            txa                     ; Set X to start of previous row in buffer
+            sec
+            sbc #BUFF_COLS
+            tax
+
+            lda CollisionPtr        ; Set screen pointer to previous line
+            sta num1lo
+            lda CollisionPtr + 1
+            sta num1hi            
+            jsr sub
+            lda reslo
+            sta CollisionPtr
+            lda reshi
+            sta CollisionPtr + 1
+
+            jmp @loop_y
+
+@done:      lda #$00
+            sta IsCollision
+            rts
+@collision:
+            pla                     ; recover Y, but discard it
+            lda #$FF
+            sta IsCollision
+            rts
