@@ -35,7 +35,7 @@ COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character mem
 GETIN = $FFE4           ; Kernal function to get keyboard input
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
 LAST_ROW = $1FE4        ; Start of last row of screen memory
-LEFT_MARGIN = $04       ; Screen splace left of board
+LEFT_MARGIN = $02       ; Screen splace left of board
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
 NOT_SEEN = $FF          ; Flag value used in finding edge of piece
 SCORE_SCREEN = $1E25    ; Location of score text on screen
@@ -177,6 +177,10 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
+            jsr drawBuff
+      ;      jsr checkCollideRight
+
+
 @move_piece:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
@@ -200,7 +204,8 @@ main:
             sta CurColor
       ; handle rotation here?
             jsr drawBuff            ; Draw the piece that is in the buffer
-
+;jsr checkCollideRight
+;j;mp *
             jsr Delay
 
             jsr CheckCollision      ; Check if piece can continue downward
@@ -222,10 +227,10 @@ main:
             eor MoveFlag            ; Clear flag
 
             ; Check can move piece left
-            ; br to 'default' if not
+            ; jump to 'default' if not
             jsr checkCollideLeft    ; Sets IsCollision
             lda IsCollision
-            bne @default ; TODO: Clear IsCollision flag
+            bne @default 
 
             sta MoveFlag
             lda #(SCREEN_WIDTH - 1) ; Move to left
@@ -235,6 +240,13 @@ main:
             and MoveFlag
             beq @default
             eor MoveFlag            ; Clear flag
+
+            ; Check can move piece right
+            ; jump to default if not
+            jsr checkCollideRight
+            lda IsCollision
+            bne @default
+
             sta MoveFlag            
             lda #(SCREEN_WIDTH + 1) ; Move to the right
             jmp @add
@@ -302,7 +314,7 @@ SetupBoard:
             ldy #LEFT_MARGIN
             sta (reslo), Y
             lda #BOARD_RIGHT    ; Draw right char
-            ldy #LEFT_MARGIN + BOARD_WIDTH
+            ldy #(LEFT_MARGIN + BOARD_WIDTH + 1)
             sta (reslo), Y
 
             dex
@@ -600,8 +612,7 @@ drawBuff:
             ldx DrawIndex
             dex
             lda PieceBuff, X   
-            and #$FF                ; If the buffer character is
-            beq @skip_draw          ; set, output a block
+            beq @skip_draw          ; If the buff character is set, output a block
 
             lda CurChar             ; Get character to draw
             sta (DrawPtrLo), Y
@@ -866,4 +877,92 @@ checkCollideLeft:
             pla                     ; recover Y, but discard it
             lda #$FF
             sta IsCollision
+            rts
+
+
+; Find right edge of piece
+checkCollideRight:
+
+            ldy #BUFF_COLS
+      
+            lda #$00
+            sta BuffColBlocks       ; Set as soon as a column encountered with blocks
+            sta IsCollision
+
+@setup_col: tya
+            sta YIDX
+
+            lda #((BUFF_COLS * 3) - 1)      ; set X to some position on last row, bsed on Y counter
+            clc
+            adc YIDX
+            tax
+
+            lda PieceLoc            ; Copy current location to working poitner,
+            sta num1lo              ; but one position beyond the right edge (higher)
+            lda PieceLoc + 1
+            sta num1hi
+
+            tya
+            sta num2lo
+            lda #$00
+            sta num2hi
+            jsr add
+            lda reslo
+            sta CollisionPtr
+            lda reshi
+            sta CollisionPtr + 1
+
+            lda #BUFF_ROWS
+            sta XIDX
+
+            lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
+            sta num2lo
+            lda #$00
+            sta num2hi
+
+@loop_rows: lda PieceBuff, X            
+            beq @no_block
+            lda $FF
+            sta BuffColBlocks       ; Set flag: column has blocks in buffer
+
+            tya                     ; Check screen for a block
+            pha
+            ldy #$00
+            lda (CollisionPtr), Y
+            cmp #SPACE_CH           
+            beq @restore_y
+            pla
+            jmp @collision
+
+@restore_y: pla                     ; Restore Y
+            tay
+
+@no_block:  txa
+            sec
+            sbc #BUFF_COLS
+            tax
+
+            lda CollisionPtr
+            sta num1lo
+            lda CollisionPtr + 1
+            sta num1hi
+            jsr sub
+            lda reslo
+            sta CollisionPtr
+            lda reshi
+            sta CollisionPtr + 1
+
+            dec XIDX
+            bne @loop_rows
+
+            lda BuffColBlocks
+            bne @done
+
+            dey
+            bne @setup_col
+@done:
+            rts
+
+@collision: lda #$FF
+            sta IsCollision         ; Set collision flag
             rts
