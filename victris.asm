@@ -23,6 +23,7 @@ BLOCK_CH = $A0          ; Block charater: reverse space
 BOARD_LEFT = $76        ; Left border character  
 BOARD_RIGHT = $75       ; Right border character
 BOARD_WIDTH = $0A       ; Width of board. 10 characters.
+BOARD_BOTTOM = $1FE7    ; Bottom left of playing area
 BUFF_COLS = $04         ; Four columns in piece buffer
 BUFF_LEN = $10          ; Length of buffer of rendered piece in bytes: 16
 BUFF_ROWS = $04         ; Four rows in piece buffer
@@ -88,6 +89,7 @@ RotState:       .res 1      ; Orientation of the active piece
 PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
 DrawPtrLo:      .res 1      ; Low byte of screen pointer
 DrawPtrHi:      .res 1      ; High byte of screen pointer
+ColorPtr:       .res 2      ; Pointer into colour memory
 DrawIndex:      .res 1      ; Inexing variable
 PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on screen.
 CurChar:        .res 1      ; Current output character. Read by DrawBuff
@@ -162,6 +164,8 @@ main:
             sta ScoreScnPtr + 1
 
 @game:
+            jsr checkLineComplete
+
             lda #$00
             sta IsCollision         ; Clear collision flag
             sta MoveFlag            ; Clear movement and rotation flags
@@ -178,9 +182,7 @@ main:
             sta PieceLoc + 1
 
             jsr drawBuff
-      ;      jsr checkCollideRight
-
-
+  
 @move_piece:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
@@ -621,7 +623,7 @@ drawBuff:
             sta num2lo              ; Colors are set $7800 bytes higher than
             lda DrawPtrHi           ; the character memory.
             sta num2hi
-            lda #<COLOR_OFFSET
+            lda #<COLOR_OFFSET  ; TODO: maintain color pointer here and index with Y indead of this addition.
             sta num1lo
             lda #>COLOR_OFFSET
             sta num1hi
@@ -965,4 +967,124 @@ checkCollideRight:
 
 @collision: lda #$FF
             sta IsCollision         ; Set collision flag
+            rts
+ 
+ 
+checkLineComplete:
+
+            lda #<BOARD_BOTTOM ;bottom left of board
+            sta DrawPtrLo
+            lda #>BOARD_BOTTOM 
+            sta DrawPtrLo + 1
+
+            lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
+            sta num2lo
+            lda #$00
+            sta num2hi
+
+            ldx #SCREEN_HEIGHT - 2
+@loop_row: 
+            lda #BLOCK_CH
+            ldy #BOARD_WIDTH - 1
+@loop_col:             
+            and (DrawPtrLo), Y      ; If a space found, go on to next row
+            cmp #BLOCK_CH
+            bne @next_row
+
+            dey
+            bpl @loop_col
+
+            cmp #BLOCK_CH           ; No spaces found: row is complete.
+            bne @next_row
+
+            jsr shiftDown           ; Shift above rows down.
+
+            jmp @loop_row           ; Recheck current row, a complete row may
+                                    ; have moved down into current line
+
+ @next_row: 
+          
+            lda DrawPtrLo
+            sta num1lo
+            lda DrawPtrLo + 1
+            sta num1hi
+            jsr sub
+            lda reslo
+            sta DrawPtrLo
+            lda reshi
+            sta DrawPtrHi
+
+            dex
+            bne @loop_row
+
+            rts            
+
+; Shift the game board contents down one row.
+; Reads the position ot start shifting from
+; DrawPtr. Restores the value fo DrawPtr before
+; return.
+shiftDown:
+            pha                     ; Save registers and DrawPointer
+            txa             
+            pha
+            tya
+            pha
+            lda DrawPtrLo           
+            pha
+            lda DrawPtrLo + 1
+            pha
+
+            lda DrawPtrLo           ; Setup pointer into colour memory.
+            sta num1lo
+            lda DrawPtrLo + 1
+            sta num2hi
+
+ ;           lda #<COLOR_OFFSET
+ ;           sta num2lo
+ ;           lda #>COLOR_OFFSET
+ ;           sta num2hi
+  ;          jsr add 
+  ;          lda reslo
+  ;          sta ColorPtr
+  ;          lda reshi
+  ;          sta ColorPtr + 1
+
+
+            lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
+            sta num2lo
+            lda #$00
+            sta num2hi
+
+@loop_row: ldy #BOARD_WIDTH - 1
+
+            lda DrawPtrLo           ; reslo will contain pointer to previous line
+            sta num1lo
+            lda DrawPtrLo + 1
+            sta num1hi
+            jsr sub
+
+@loop_col:  lda (reslo), Y          ; Copy character from row above to row below
+            sta (DrawPtrLo), Y
+
+            dey
+            bpl @loop_col
+
+ @next_row: lda reslo               ; Make the row above the new current row
+            sta DrawPtrLo
+            lda reshi            
+            sta DrawPtrHi
+            
+            dex
+            bne @loop_row
+
+            pla                     ; Restore registers and draw pointer
+            sta DrawPtrLo + 1
+            pla 
+            sta DrawPtrLo
+            pla      
+            tay
+            pla
+            tax
+            pla
+
             rts
