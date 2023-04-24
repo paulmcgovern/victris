@@ -35,7 +35,7 @@ CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 COLOR_MEM = $9600       ; Start of color memory
 COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
 GETIN = $FFE4           ; Kernal function to get keyboard input
-INITIAL_POS = $1E4A     ; Initial location of lower right of piece
+INITIAL_POS = $1E48     ; Initial location of lower left of piece
 LAST_ROW = $1FE4        ; Start of last row of screen memory
 LEFT_MARGIN = $02       ; Screen splace left of board
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
@@ -45,6 +45,7 @@ SCORE_SCREEN = $1E25    ; Location of score text on screen
 SCREEN_HEIGHT = $17     ; Default screen height, in bytes: 23
 SCREEN_WIDTH = $16      ; Default screen width, in bytes: 22
 SPACE_CH = $20          ; Space chracter
+TIMER1 = $9124          ; Timer low byte
 WHITE = $01             ; Color code for white
 
 MOVE_ROTATE = $01       ; Flag to indicate piece should rotate
@@ -82,6 +83,7 @@ TXT_CONTROLS_2: scrcode "s: rotate@"
 TXT_CONTROLS_3: scrcode "d: move right@"
 TXT_CONTROLS_4: scrcode "space: drop@"
 TXT_START:      scrcode "press any key@"
+TXT_GAME_OVER:  scrcode "game over@"
 
 .segment "ZEROPAGE"
 
@@ -106,7 +108,7 @@ ScoreScnPtr:    .res 2      ; Pointer to score on screen
 BuffColBlocks:  .res 1      ; Set when piece buffer column has a block.
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
 RotCol:         .res 1      ; Housekeeping variable in buffer rotaiton routine
-
+RowCount:       .res 1      ; Number of complete rows found at one time
 
 CollisionPtr:   .res 2
 
@@ -137,7 +139,7 @@ reshi: .res 1
 main:      
             lda #$00
             sta CurPieceIdx
-            sta RotState
+            sta RotState            ; $00 is horizontal
             sta IsCollision
             sta Score
             sta Score + 1
@@ -151,8 +153,8 @@ main:
 
             jsr SetupBoard
 
-            lda #$11                ; TODO: init seed from timer + 1
-            sta seed
+            lda TIMER1              ; Init random seed from timer   
+            sta seed        
 
             lda #<TXT_SCORE         ; Print 'score', upper right
             sta TextPtr
@@ -169,10 +171,16 @@ main:
             lda #>SCORE_SCREEN
             sta ScoreScnPtr + 1
 
-@game:
+            jsr PrintScore
+@game:  
             jsr checkLineComplete
 
-            lda #$00
+            lda RowCount
+            beq @no_score
+            jsr IncScore
+            jsr PrintScore
+
+@no_score:  lda #$00
             sta IsCollision         ; Clear collision flag
             sta MoveFlag            ; Clear movement and rotation flags
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
@@ -187,8 +195,6 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
-            ;jsr drawBuff
-  
 @move_piece:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
@@ -199,6 +205,10 @@ main:
             beq @no_rotate
             lda #$00
             sta MoveFlag
+
+            jsr checkCollideRight   ; Room on right to rotate?
+            lda IsCollision         
+            bne @no_rotate
             jsr rotateCw
 
 @no_rotate:
@@ -208,16 +218,14 @@ main:
             ldx CurPieceIdx         ; Get the color of the current piece
             lda COLORS, X            
             sta CurColor
-      ; handle rotation here?
+
             jsr drawBuff            ; Draw the piece that is in the buffer
-;jsr checkCollideRight
-;j;mp *
+
             jsr Delay
 
             jsr CheckCollision      ; Check if piece can continue downward
 
-            lda #$FF
-            and IsCollision
+            lda IsCollision         ; Nowhere to move so start another piece 
             bne @game
 
             lda #SPACE_CH           ; Setup to erase the rendered piece
@@ -276,11 +284,11 @@ main:
             lda reshi
             sta PieceLoc + 1
           
-            jsr IncScore
+      ;  jsr IncScore
 
             jmp @move_piece
 
-
+; Print the welcome screen text
 Welcome:
             lda #<(COLOR_MEM + (SCREEN_WIDTH * 3))
             sta ColorPtr
@@ -323,7 +331,6 @@ Welcome:
             sta DrawPtrLo + 1            
             jsr PrintString
 
-
             lda #<TXT_CONTROLS_3
             sta TextPtr
             lda #>TXT_CONTROLS_3
@@ -362,11 +369,50 @@ Welcome:
             lda #WHITE
             ldy SCREEN_WIDTH
             
-@white_text:sta (ColorPtr), Y
+@white_text:sta (ColorPtr), Y       ; Reset to default BG color
             dey
             bne @white_text
 
             rts
+
+; Print game over: red band with text.
+GameOver:
+            lda #<(COLOR_MEM + (SCREEN_WIDTH * 8))
+            sta ColorPtr
+            lda #>(COLOR_MEM + (SCREEN_WIDTH * 8))
+            sta ColorPtr + 1
+
+            lda #<(SCREEN + (SCREEN_WIDTH * 8))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 8))
+            sta DrawPtrLo + 1
+          
+            ldy #(SCREEN_WIDTH * 3)- 1          
+
+@red_band:
+            lda #BLOCK_CH
+            sta (DrawPtrLo), Y
+            lda #RED
+            sta (ColorPtr), Y
+            
+            dey
+            bpl @red_band
+
+            lda #<TXT_GAME_OVER
+            sta TextPtr
+            lda #>TXT_GAME_OVER
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 9 ) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 9) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+
+@any_key:   jsr GETIN               ; A is zero if no input read
+            beq @any_key
+
+            rts
+
 
 ; Y is the govenor of the delay
 ; If the drop flag is set on ActioFlag, do not loop.
@@ -423,7 +469,7 @@ SetupBoard:
 @done:
             rts
 
-Bin2BCD:
+PrintScore:
             lda Score
             sta Val
             lda Score + 1
@@ -517,22 +563,30 @@ PrintString:
             jmp @loop_y
 @end:       rts
 
-; Incrementthe score (16 bits) and
-; then encode as BCD and print to screen
+
+; Increment score depending on number of rows
+; Score is 16 bits
 IncScore:
-            lda Score
-            clc
-            adc #$01
+            lda RowCount
+            beq @done
+            cmp #$01
+            beq @add_score
+            tax
+            lda #$01
+@loop_x:    asl
+            dex
+            bne @loop_x
+
+@add_score: clc
+            adc Score
             sta Score
-            bcc @skip
-            inc Score + 1            
-@skip:      jsr Bin2BCD
-            rts
+            bcc @done
+            inc Score + 1
+@done:      rts
 
 ; Pick a random piece.
 ; https://codebase64.org/doku.php?id=base:small_fast_8-bit_prng
 GetRandPiece:
-; TODO: just get low bit from $
             lda seed
             beq @doEor
             asl
@@ -544,7 +598,7 @@ GetRandPiece:
             and #%00000111      ; CurPieceIdx must be between 0 and 6, inclusive.
             cmp #$07 
             beq GetRandPiece
-;lda #$01
+
             sta CurPieceIdx
             rts
 
@@ -557,8 +611,6 @@ ClearBuff:
             sta PieceBuff, X          
             bne @loop_x
             rts
-
-
 
 
 ; Unpack the encoded piece with no roation
@@ -1063,6 +1115,9 @@ checkCollideRight:
 
 checkLineComplete:
 
+            lda #$00
+            sta RowCount
+
             lda #<BOARD_BOTTOM ;bottom left of board
             sta DrawPtrLo
             lda #>BOARD_BOTTOM 
@@ -1089,6 +1144,8 @@ checkLineComplete:
             bne @next_row
 
             jsr shiftDown           ; Shift above rows down.
+
+            inc RowCount            ; Count rows
 
             jmp @loop_row           ; Recheck current row, a complete row may
                                     ; have moved down into current line
