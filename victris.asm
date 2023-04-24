@@ -99,7 +99,6 @@ DrawIndex:      .res 1      ; Inexing variable
 PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on screen.
 CurChar:        .res 1      ; Current output character. Read by DrawBuff
 CurColor:       .res 1      ; Color of current character. Read by DrawBuff
-BuffPtr:        .res 1      ; Pointer into character buffer. Used by drawBuff.
 IsCollision:    .res 1      ; Flag set when piece can no longer move. Set by Check collision.
 seed:           .res 1      ; Generated random number. 
 Score:          .res 2      ; Current score
@@ -722,13 +721,6 @@ rotateCw:
 
 @done:      rts
 
-; If XIDX is not set, shift everything down by 4
-          
-;@done:  nop
-
-;@sf: nop
-;jmp @sf
-;    rts
 
 ; Draw the piece buffer, starting from the
 ; bottom right. Draw the piece if the given 
@@ -738,17 +730,36 @@ rotateCw:
 ; character location.
 drawBuff:
             lda #PieceBuff + 16 ; End of unpacked piece buffer
-            sta BuffPtr ; TODO: is BuffPtr variable required?
 
             lda PieceLoc            ; Copy current location to working poitner
             sta DrawPtrLo
             lda PieceLoc + 1
-            sta DrawPtrHi
+            sta DrawPtrLo + 1
+
+            lda DrawPtrLo           ; Calculate offset into screen color area.
+            sta num2lo              ; Colors are set $7800 bytes higher than
+            lda DrawPtrHi           ; the character memory.
+            sta num2hi
+            lda #<COLOR_OFFSET  
+            sta num1lo
+            lda #>COLOR_OFFSET
+            sta num1hi
+            jsr add 
+            lda reslo
+            sta ColorPtr
+            lda reshi
+            sta ColorPtr + 1
 
             ldx #$04        ; X is  counter: on for each row
             ldy #$03        ; Y is an index into buffer.    
             lda #BUFF_LEN   ; Run one iteration for each byte in piece buffer.
             sta DrawIndex
+
+            lda #SCREEN_WIDTH       ; Set up for row subtraction
+            sta num2lo
+            lda #$00
+            sta num2hi
+
 
 @loop_draw: 
 
@@ -761,45 +772,38 @@ drawBuff:
 
             lda CurChar             ; Get character to draw
             sta (DrawPtrLo), Y
-
-            lda DrawPtrLo           ; Calculate offset into screen color area.
-            sta num2lo              ; Colors are set $7800 bytes higher than
-            lda DrawPtrHi           ; the character memory.
-            sta num2hi
-            lda #<COLOR_OFFSET  ; TODO: maintain color pointer here and index with Y indead of this addition.
-            sta num1lo
-            lda #>COLOR_OFFSET
-            sta num1hi
-            jsr add 
-      
+     
             lda CurColor            ; Get the color of the current piece
-            sta (reslo), Y
+            sta (ColorPtr), Y
 
 @skip_draw: pla                     ; Restore X from stack
             tax
-            dec BuffPtr             ; Next buffer character
             dey            
             dex                     ; After drawing 4 chars
             bne @row_end            ; decrement pointer
             
             ldx #$04
             ldy #$03
-            lda DrawPtrLo           ; Set up number1 - number2
+
+            lda DrawPtrLo           ; Update draw pointer to previous line
             sta num1lo
             lda DrawPtrHi
             sta num1hi
-
-            lda #SCREEN_WIDTH       ; Set up for row subtraction
-            sta num2lo
-            lda #$00
-            sta num2hi
-
             jsr sub
-
             lda reslo
             sta DrawPtrLo
             lda reshi
-            sta DrawPtrHi    
+            sta DrawPtrHi  
+
+            lda ColorPtr            ; Update color pointer to previous line
+            sta num1lo
+            lda ColorPtr + 1
+            sta num1hi  
+            jsr sub
+            lda reslo
+            sta ColorPtr
+            lda reshi
+            sta ColorPtr + 1
 
 @row_end:   dec DrawIndex
             bne @loop_draw
