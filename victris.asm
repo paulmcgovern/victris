@@ -32,6 +32,7 @@ CHAR_LEFT = $41         ; Move left 'A'
 CHAR_RIGHT = $44        ; Move right 'D'
 CHAR_ROTATE = $53       ; Rotate 'S'
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
+COLOR_MEM = $9600       ; Start of color memory
 COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
 GETIN = $FFE4           ; Kernal function to get keyboard input
 INITIAL_POS = $1E4A     ; Initial location of lower right of piece
@@ -39,6 +40,7 @@ LAST_ROW = $1FE4        ; Start of last row of screen memory
 LEFT_MARGIN = $02       ; Screen splace left of board
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
 NOT_SEEN = $FF          ; Flag value used in finding edge of piece
+RED=$02                 ; Color red, for the title in welcome screen
 SCORE_SCREEN = $1E25    ; Location of score text on screen
 SCREEN_HEIGHT = $17     ; Default screen height, in bytes: 23
 SCREEN_WIDTH = $16      ; Default screen width, in bytes: 22
@@ -90,6 +92,7 @@ PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
 DrawPtrLo:      .res 1      ; Low byte of screen pointer
 DrawPtrHi:      .res 1      ; High byte of screen pointer
 ColorPtr:       .res 2      ; Pointer into colour memory
+SrcPtr:         .res 2      ; Pointer for copying character and colour memory
 DrawIndex:      .res 1      ; Inexing variable
 PieceLoc:       .res 2      ; 16 bit pointer to lower right of current piece on screen.
 CurChar:        .res 1      ; Current output character. Read by DrawBuff
@@ -143,6 +146,9 @@ main:
             sta BORDER_REG
             
             jsr ClearScreen
+
+            jsr Welcome
+
             jsr SetupBoard
 
             lda #$11                ; TODO: init seed from timer + 1
@@ -181,7 +187,7 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
-            jsr drawBuff
+            ;jsr drawBuff
   
 @move_piece:
 
@@ -194,8 +200,6 @@ main:
             lda #$00
             sta MoveFlag
             jsr rotateCw
-
-            
 
 @no_rotate:
 
@@ -276,6 +280,93 @@ main:
 
             jmp @move_piece
 
+
+Welcome:
+            lda #<(COLOR_MEM + (SCREEN_WIDTH * 3))
+            sta ColorPtr
+            lda #>(COLOR_MEM + (SCREEN_WIDTH * 3))
+            sta ColorPtr + 1
+            lda #RED
+            ldy SCREEN_WIDTH
+
+@red_text:  sta (ColorPtr), Y
+            dey
+            bne @red_text
+
+            lda #<TXT_TITLE
+            sta TextPtr
+            lda #>TXT_TITLE
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 3) + ((SCREEN_WIDTH - 6 ) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 3) + ((SCREEN_WIDTH - 6) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+
+            lda #<TXT_CONTROLS_1
+            sta TextPtr
+            lda #>TXT_CONTROLS_1
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 6) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 6) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+
+            lda #<TXT_CONTROLS_2
+            sta TextPtr
+            lda #>TXT_CONTROLS_2
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 7) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 7) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+
+
+            lda #<TXT_CONTROLS_3
+            sta TextPtr
+            lda #>TXT_CONTROLS_3
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 8) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 8) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+      
+            lda #<TXT_CONTROLS_4
+            sta TextPtr
+            lda #>TXT_CONTROLS_4
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 12) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+
+            lda #<TXT_START
+            sta TextPtr
+            lda #>TXT_START
+            sta TextPtr + 1
+            lda #<(SCREEN + (SCREEN_WIDTH * 14) + ((SCREEN_WIDTH - 13 ) / 2))
+            sta DrawPtrLo
+            lda #>(SCREEN + (SCREEN_WIDTH * 14) + ((SCREEN_WIDTH - 13 ) / 2))
+            sta DrawPtrLo + 1            
+            jsr PrintString
+                        
+@any_key:   jsr GETIN               ; A is zero if no input read
+            beq @any_key
+
+            jsr ClearScreen
+
+            lda #WHITE
+            ldy SCREEN_WIDTH
+            
+@white_text:sta (ColorPtr), Y
+            dey
+            bne @white_text
+
+            rts
 
 ; Y is the govenor of the delay
 ; If the drop flag is set on ActioFlag, do not loop.
@@ -969,7 +1060,7 @@ checkCollideRight:
             sta IsCollision         ; Set collision flag
             rts
  
- 
+
 checkLineComplete:
 
             lda #<BOARD_BOTTOM ;bottom left of board
@@ -1037,18 +1128,17 @@ shiftDown:
             lda DrawPtrLo           ; Setup pointer into colour memory.
             sta num1lo
             lda DrawPtrLo + 1
+            sta num1hi
+
+            lda #<COLOR_OFFSET
+            sta num2lo
+            lda #>COLOR_OFFSET
             sta num2hi
-
- ;           lda #<COLOR_OFFSET
- ;           sta num2lo
- ;           lda #>COLOR_OFFSET
- ;           sta num2hi
-  ;          jsr add 
-  ;          lda reslo
-  ;          sta ColorPtr
-  ;          lda reshi
-  ;          sta ColorPtr + 1
-
+            jsr add 
+            lda reslo
+            sta ColorPtr
+            lda reshi
+            sta ColorPtr + 1
 
             lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
             sta num2lo
@@ -1057,23 +1147,41 @@ shiftDown:
 
 @loop_row: ldy #BOARD_WIDTH - 1
 
-            lda DrawPtrLo           ; reslo will contain pointer to previous line
-            sta num1lo
+            lda DrawPtrLo           ; Set up source pointer. reslo will 
+            sta num1lo              ; contain pointer to previous (above) line
             lda DrawPtrLo + 1
             sta num1hi
             jsr sub
+            lda reslo
+            sta SrcPtr
+            lda reshi
+            sta SrcPtr + 1
 
-@loop_col:  lda (reslo), Y          ; Copy character from row above to row below
+            lda ColorPtr            ; reso will contain previous line in color memory
+            sta num1lo              
+            lda ColorPtr + 1
+            sta num1hi
+            jsr sub
+
+@loop_col:  lda (SrcPtr), Y         ; Copy character from row above to row below
             sta (DrawPtrLo), Y
+
+            lda (reslo), Y          ; Copy color form row above to row below
+            sta (ColorPtr), Y
 
             dey
             bpl @loop_col
 
- @next_row: lda reslo               ; Make the row above the new current row
+ @next_row: lda SrcPtr              ; Make the row above the new current row
             sta DrawPtrLo
-            lda reshi            
-            sta DrawPtrHi
+            lda SrcPtr + 1            
+            sta DrawPtrLo + 1
             
+            lda reslo
+            sta ColorPtr
+            lda reshi
+            sta ColorPtr + 1
+
             dex
             bne @loop_row
 
