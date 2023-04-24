@@ -114,8 +114,6 @@ CollisionPtr:   .res 2
 XIDX: .res 1    ; TODO: consolidate XIDX and YIDX into one *or* use registers.
 YIDX: .res 1
 
-
-
 ; BCD stuff
 Res:            .res 3      ; 24 bit BVD encoded score
 Val :           .res 2      ; Work vars for BCD encoding
@@ -184,7 +182,6 @@ main:
             sta MoveFlag            ; Clear movement and rotation flags
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
 
-
             jsr GetRandPiece        ; Pick a random piece
 
             jsr unpack000           ; Unpack the current piece to the buffer with no rotation
@@ -194,6 +191,12 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
+            jsr CheckCollision
+            lda IsCollision
+            beq @move_piece
+            jsr GameOver
+            jmp main
+            
 @move_piece:
 
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
@@ -206,7 +209,7 @@ main:
             sta MoveFlag
 
             jsr checkCollideRight   ; Room on right to rotate?
-            lda IsCollision         
+            lda IsCollision         ; TODO: only check collide when moving from vertical to horizontal
             bne @no_rotate
             jsr rotateCw
 
