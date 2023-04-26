@@ -34,8 +34,10 @@ CHAR_ROTATE = $53       ; Rotate 'S'
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 COLOR_MEM = $9600       ; Start of color memory
 COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
+DEFAULT_IRQ = $EABF     ; Default IRQ handler
 GETIN = $FFE4           ; Kernal function to get keyboard input
 INITIAL_POS = $1E48     ; Initial location of lower left of piece
+IRQ_VECT = $0314        ; Hardware (IRQ) interrupt vector [EABF]
 LAST_ROW = $1FE4        ; Start of last row of screen memory
 LEFT_MARGIN = $02       ; Screen splace left of board
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
@@ -46,12 +48,20 @@ SCREEN_HEIGHT = $17     ; Default screen height, in bytes: 23
 SCREEN_WIDTH = $16      ; Default screen width, in bytes: 22
 SPACE_CH = $20          ; Space chracter
 TIMER1 = $9124          ; Timer low byte
+VOICE_1 = $900A         ; Low sound register
+VOICE_2 = $900B         ; Medium sound register
+VOICE_3 = $900C         ; High sound register
+VOICE_4 = $900D         ; Noise sound register
+VOLUME = $900E          ; Volume register
 WHITE = $01             ; Color code for white
 
 MOVE_ROTATE = $01       ; Flag to indicate piece should rotate
 MOVE_DROP   = $02       ; Flag to indicate piece should drop
 MOVE_LEFT   = $04       ; Flag to indicate piece should move left
 MOVE_RIGHT  = $08       ; Flag to indicate piece should move right
+
+SOUND_BEEP = $01        ; Beep!
+SOUND_BOOP = $02        ; Boop!
 
 .segment "RODATA"
 
@@ -108,7 +118,9 @@ BuffColBlocks:  .res 1      ; Set when piece buffer column has a block.
 MoveFlag:       .res 1      ; Movement flag. See MOVE_* flags above for values.
 RotCol:         .res 1      ; Housekeeping variable in buffer rotaiton routine
 RowCount:       .res 1      ; Number of complete rows found at one time
-
+SoundFlag:      .res 1      ; Sound to play
+SoundDuration1: .res 1      ; Length of time to play sound 1
+SoundDuration2: .res 1      ; Length of time to play sound 2
 CollisionPtr:   .res 2
 
 XIDX: .res 1    ; TODO: consolidate XIDX and YIDX into one *or* use registers.
@@ -133,13 +145,28 @@ reshi: .res 1
 .segment "GRCHARS"
 .segment "CODE"
 
-main:      
+
+main:   
+
+            sei                     ; Set up handler for timer interrupts (60hz)            
+            lda #<IrqHandler 
+            sta IRQ_VECT
+            lda #>IrqHandler
+            sta IRQ_VECT + 1
+            cli
+
             lda #$00
             sta CurPieceIdx
             sta RotState            ; $00 is horizontal
+            sta SoundDuration1
+            sta SoundDuration1   
+            sta SoundFlag
             sta IsCollision
             sta Score
             sta Score + 1
+
+            lda #$0C                ; Set sound volume
+            sta VOLUME
 
             lda #LTBLUE_BLK         ; Setup bg and border
             sta BORDER_REG
@@ -172,8 +199,13 @@ main:
 @game:  
             jsr checkLineComplete
 
-            lda RowCount
+            lda RowCount            ; Were any rows completed?
             beq @no_score
+
+            lda #SOUND_BEEP         ; Play score sound: set bit
+            ora SoundFlag
+            sta SoundFlag
+
             jsr IncScore
             jsr PrintScore
 
@@ -196,9 +228,8 @@ main:
             beq @move_piece
             jsr GameOver
             jmp main
-            
-@move_piece:
 
+@move_piece:
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
                                     ; Set MoveFlag if any input set.
 
@@ -227,8 +258,16 @@ main:
 
             jsr CheckCollision      ; Check if piece can continue downward
 
-            lda IsCollision         ; Nowhere to move so start another piece 
-            bne @game
+            lda IsCollision         ; Nowhere to move so start another piece
+            beq @continue
+
+            lda #SOUND_BOOP         ; Play piece down sound
+            ora SoundFlag
+            sta SoundFlag
+
+            jmp @game               ; Generate another piece...
+
+@continue:
 
             lda #SPACE_CH           ; Setup to erase the rendered piece
             sta CurChar
@@ -285,10 +324,9 @@ main:
             sta PieceLoc
             lda reshi
             sta PieceLoc + 1
-          
-      ;  jsr IncScore
 
             jmp @move_piece
+
 
 ; Print the welcome screen text
 Welcome:
@@ -1260,3 +1298,69 @@ shiftDown:
             pla
 
             rts
+
+
+IrqHandler:
+            pha                     ; Save state
+            txa             
+            pha
+            tya
+            pha
+
+            lda SoundFlag
+            beq @done               ; No flags set, nothing to do
+
+            and #SOUND_BEEP         ; Is play BEEP set?
+            beq @done_beep
+
+            lda SoundDuration1
+            bne @init_done
+
+            lda #$11                ; Initialize duration
+            sta SoundDuration1
+            lda #$EC
+            sta VOICE_2
+
+@init_done: dec SoundDuration1
+            beq @beep_off
+
+            jmp @done_beep
+
+@beep_off : lda #SOUND_BEEP
+            eor SoundFlag
+            sta SoundFlag
+            lda #$00                  
+            sta VOICE_2           
+
+@done_beep: 
+            lda SoundFlag           ; Is play BOOP set?
+            and #SOUND_BOOP
+            beq @done
+
+            lda SoundDuration2
+            bne @boop_init_done
+
+            lda #$09                ; Initialize duration
+            sta SoundDuration2
+            lda #$80 
+            sta VOICE_1
+
+@boop_init_done: 
+            dec SoundDuration2
+            beq @boop_off
+
+            jmp @done
+
+@boop_off:  lda #SOUND_BOOP
+            eor SoundFlag
+            sta SoundFlag
+            lda #$00                  
+            sta VOICE_1            
+
+@done:      pla                     ; Restore state
+            tay
+            pla
+            tax
+            pla
+            jmp $EABF               ; Proceed to default interrupt handler
+
