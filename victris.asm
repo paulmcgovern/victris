@@ -1,4 +1,4 @@
-;https://www.cc65.org/doc/ca65.html#toc11
+;https://www.cc65.org/doc/ca65.html#toc11board_b
 ; https://github.com/bbbradsmith/NES-ca65-example/blob/master/example.s
 ; /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=xvic net.sf.VICE --autostart test
 ; D64 file disk image maker is in the flatpak distro too.
@@ -6,7 +6,7 @@
 ; rm test.o test; cl65 test.asm -t vic20 -C vic20-aliens-inv/vic20alinv.cfg -o test
 ;
 ; https://unfinishedbitness.info/2014/09/26/6502-string-to-integer-and-reverse/
-;
+;http://www.zimmers.net/anonftp/pub/cbm/maps/Vic20.MemoryMap.txt
 ; Compile: create label file
 ; rm test.o test; cl65 test.asm -Ln test.lbl -m map.txt -t vic20 -C vic20-aliens-inv/vic20alinv.cfg -o test
 ; Get "random" value form clock low bit at $00A2
@@ -28,16 +28,18 @@ BUFF_COLS = $04         ; Four columns in piece buffer
 BUFF_LEN = $10          ; Length of buffer of rendered piece in bytes: 16
 BUFF_ROWS = $04         ; Four rows in piece buffer
 CHAR_DROP =  $20        ; Drop piece: space
-CHAR_LEFT = $41         ; Move left 'A'
-CHAR_RIGHT = $44        ; Move right 'D'
-CHAR_ROTATE = $53       ; Rotate 'S'
+CHAR_LEFT = $4A         ; Move left 'J'
+CHAR_RIGHT = $4C        ; Move right 'L'
+CHAR_ROTATE = $4B       ; Rotate 'K'
+CHROUT = $FFD2          ; Kernel function to output a character
 CLOCK_LOW = $A2         ; Low byte of clock. Incremented every 1/60 sec.
 COLOR_MEM = $9600       ; Start of color memory
 COLOR_OFFSET = $7800    ; Start of color memory, $7800 bytes above character memory.
 DEFAULT_IRQ = $EABF     ; Default IRQ handler
 GETIN = $FFE4           ; Kernal function to get keyboard input
 INITIAL_POS = $1E48     ; Initial location of lower left of piece
-IRQ_VECT = $0314        ; Hardware (IRQ) interrupt vector [EABF]
+IRQ_VECT = $0314        ; Hardware (IRQ) interrupt vector [$EABF]
+KEYBOARD_BUFF_CHRS = $C6; Number of character in keyboard buffer
 LAST_ROW = $1FE4        ; Start of last row of screen memory
 LEFT_MARGIN = $02       ; Screen splace left of board
 LTBLUE_BLK = $E8        ; Screen: black border and light blue background
@@ -88,9 +90,9 @@ COLORS:
 ; Text strings are is terminated with '@', PETSCII 0.
 TXT_SCORE:      scrcode "score:@"
 TXT_TITLE:      scrcode "tetris@"
-TXT_CONTROLS_1: scrcode "a: move left@"
-TXT_CONTROLS_2: scrcode "s: rotate@"
-TXT_CONTROLS_3: scrcode "d: move right@"
+TXT_CONTROLS_1: scrcode "j: move left@"
+TXT_CONTROLS_2: scrcode "k: rotate@"
+TXT_CONTROLS_3: scrcode "l: move right@"
 TXT_CONTROLS_4: scrcode "space: drop@"
 TXT_START:      scrcode "press any key@"
 TXT_GAME_OVER:  scrcode "game over@"
@@ -146,8 +148,7 @@ reshi: .res 1
 .segment "CODE"
 
 
-main:   
-
+main: 
             sei                     ; Set up handler for timer interrupts (60hz)            
             lda #<IrqHandler 
             sta IRQ_VECT
@@ -155,7 +156,7 @@ main:
             sta IRQ_VECT + 1
             cli
 
-            lda #$00
+            lda #$00                ; Initialize ZP vars
             sta CurPieceIdx
             sta RotState            ; $00 is horizontal
             sta SoundDuration1
@@ -164,6 +165,8 @@ main:
             sta IsCollision
             sta Score
             sta Score + 1
+            sta VOICE_1
+            sta VOICE_2
 
             lda #$0C                ; Set sound volume
             sta VOLUME
@@ -173,14 +176,14 @@ main:
             
             jsr ClearScreen
 
-            jsr Welcome
+            jsr Welcome             ; Display welcome message
 
-            jsr SetupBoard
+            jsr SetupBoard          ; Draw board
 
             lda TIMER1              ; Init random seed from timer   
             sta seed        
 
-            lda #<TXT_SCORE         ; Print 'score', upper right
+            lda #<TXT_SCORE         ; Print 'SCORE', upper right
             sta TextPtr
             lda #>TXT_SCORE
             sta TextPtr + 1
@@ -195,8 +198,11 @@ main:
             lda #>SCORE_SCREEN
             sta ScoreScnPtr + 1
 
-            jsr PrintScore
-@game:  
+            jsr PrintScore          ; Set up score on screen
+@game:
+            lda #$00        
+            sta KEYBOARD_BUFF_CHRS  ; Clear any pending input 
+
             jsr checkLineComplete
 
             lda RowCount            ; Were any rows completed?
@@ -212,11 +218,12 @@ main:
 @no_score:  lda #$00
             sta IsCollision         ; Clear collision flag
             sta MoveFlag            ; Clear movement and rotation flags
+            sta RotState            ; Clear roatation flag: is horizontal
             jsr ClearBuff           ; Clear the buffer containing the unpacked piece
 
             jsr GetRandPiece        ; Pick a random piece
 
-            jsr unpack000           ; Unpack the current piece to the buffer with no rotation
+            jsr unpackPiece         ; Unpack the current piece to the buffer with no rotation
 
             lda #<INITIAL_POS       ; Set up to introduce new piece
             sta PieceLoc
@@ -233,19 +240,20 @@ main:
             jsr GetInput            ; Get user input: left, right, rotate, or drop.
                                     ; Set MoveFlag if any input set.
 
-            lda #MOVE_ROTATE         ; Was a rotation requested?
+            lda #MOVE_ROTATE        ; Was a rotation requested?
             and MoveFlag
             beq @no_rotate
             lda #$00
             sta MoveFlag
 
+            lda RotState            ; Check for collision on right when 
+            beq @do_rotate          ; going from vertical to horizontal.
             jsr checkCollideRight   ; Room on right to rotate?
-            lda IsCollision         ; TODO: only check collide when moving from vertical to horizontal
+            lda IsCollision         
             bne @no_rotate
-            jsr rotateCw
+@do_rotate: jsr rotateCw
 
 @no_rotate:
-
             lda #BLOCK_CH           ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
@@ -429,12 +437,10 @@ GameOver:
           
             ldy #(SCREEN_WIDTH * 3)- 1          
 
-@red_band:
-            lda #BLOCK_CH
+@red_band:  lda #BLOCK_CH
             sta (DrawPtrLo), Y
             lda #RED
-            sta (ColorPtr), Y
-            
+            sta (ColorPtr), Y            
             dey
             bpl @red_band
 
@@ -457,15 +463,15 @@ GameOver:
 ; Y is the govenor of the delay
 ; If the drop flag is set on ActioFlag, do not loop.
 Delay:
-
             lda #MOVE_DROP
             and MoveFlag
             beq @no_drop
             rts
 @no_drop:
             ldx #$FF            
-            ldy #$FF ; TODO: decrement by current level
+            ldy #$FF                ; TODO: decrement by current level
 @loop:      dex
+            nop
             bne @loop
             dey
             bne @loop
@@ -536,7 +542,7 @@ PrintScore:
             bne @loop_x
             cld             ; Leave decimal mode
 
-            ldy #$16        ; Write to row below score label
+            ldy #SCREEN_WIDTH ; Write to row below score label
             ldx #$02        ; Start at ScoreScnPtr and use Y             
 @loop_res:  lda Res, X      ; Note: PrintBCD modifies Y            
             jsr PrintBCD
@@ -588,7 +594,7 @@ sub:
 ; Clear the screen
 ClearScreen: 
             lda #$93
-            jsr $FFD2
+            jsr CHROUT 
             rts
 
 ; Print string to screen. Reads from TextPtr.
@@ -661,7 +667,7 @@ ClearBuff:
 ; and writes FF for each set bit.
 ; 0 1 2 3
 ; 4 5 6 7
-unpack000:          
+unpackPiece:          
             ldx CurPieceIdx     ; Lookup current piece
             lda PIECES, X
             ldx #$08            ; Loop 8 times, one for each bit
@@ -714,11 +720,9 @@ rotateCw:
             dex
             bpl @rewrite
 
-; "lower" the piece into the bottom last corner
-
-@shift_rows_down:
+@shift_rows_down:                   ; "lower" the piece into the bottom last corner
             lda #$00
-            sta XIDX            ; Set when bottom row has a block
+            sta XIDX                ; Set when bottom row has a block
 
             ldy #BUFF_COLS
             ldx #BUFF_LEN - 1
@@ -756,11 +760,14 @@ rotateCw:
             dex
             bpl @fill_row
 
-
             lda PieceBuff + $0D     ; Is anoter round of lowering required? Check byte
             beq @shift_rows_down    ; at lower left of buffer
 
-@done:      rts
+@done:      lda #$FF                ; Update roation flag. Zero is horizontal
+            eor RotState
+            sta RotState
+            
+            rts
 
 
 ; Draw the piece buffer, starting from the
@@ -1299,7 +1306,9 @@ shiftDown:
 
             rts
 
-
+; Interrupt handler. Plays game sounds for the given
+; durations and then calls the default interrupt handler.
+; Called 60 times a second.
 IrqHandler:
             pha                     ; Save state
             txa             
