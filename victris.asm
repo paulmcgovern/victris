@@ -14,8 +14,8 @@
 ; https://gist.github.com/hausdorff/5993556
 ; https://github.com/bbbradsmith/prng_6502
 
-;.debuginfo on
-.macpack cbm              ; Enable scrcode macro (ASCII to PETSKII)
+.debuginfo +            ; Genreate label file
+.macpack cbm            ; Enable scrcode macro (ASCII to PETSKII)
 
 SCREEN = $1E00          ; Start of screen memory
 BORDER_REG = $900F      ; Screen background and border register
@@ -103,8 +103,7 @@ TXT_GAME_OVER:  scrcode "game over@"
 CurPieceIdx:    .res 1      ; Currently active piece
 RotState:       .res 1      ; Orientation of the active piece
 PieceBuff:      .res 16     ; 16 byte buffer for unpacking encoded pieces
-DrawPtrLo:      .res 1      ; Low byte of screen pointer
-DrawPtrHi:      .res 1      ; High byte of screen pointer
+DrawPtr:        .res 2      ; Screen pointer
 ColorPtr:       .res 2      ; Pointer into colour memory
 SrcPtr:         .res 2      ; Pointer for copying character and colour memory
 DrawIndex:      .res 1      ; Inexing variable
@@ -188,9 +187,9 @@ main:
             lda #>TXT_SCORE
             sta TextPtr + 1
             lda #<SCORE_SCREEN
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>SCORE_SCREEN
-            sta DrawPtrHi            
+            sta DrawPtr + 1           
             jsr PrintString
 
             lda #<SCORE_SCREEN  ; Set up pointer to score value on screen.
@@ -230,96 +229,114 @@ main:
             lda #>INITIAL_POS
             sta PieceLoc + 1
 
-            jsr CheckCollision
+            jsr CheckCollision      ; Game is over if there is nowhere to move.
             lda IsCollision
             beq @move_piece
             jsr GameOver
             jmp main
 
-@move_piece:
-            jsr GetInput            ; Get user input: left, right, rotate, or drop.
-                                    ; Set MoveFlag if any input set.
-
-            lda #MOVE_ROTATE        ; Was a rotation requested?
-            and MoveFlag
-            beq @no_rotate
-            lda #$00
-            sta MoveFlag
-
-            lda RotState            ; Check for collision on right when 
-            beq @do_rotate          ; going from vertical to horizontal.
-            jsr checkCollideRight   ; Room on right to rotate?
-            lda IsCollision         
-            bne @no_rotate
-@do_rotate: jsr rotateCw
-
-@no_rotate:
+@move_piece:  
             lda #BLOCK_CH           ; Character to draw the piece
             sta CurChar
             ldx CurPieceIdx         ; Get the color of the current piece
             lda COLORS, X            
             sta CurColor
-
-            jsr drawBuff            ; Draw the piece that is in the buffer
-
-            jsr Delay
+            jsr drawBuff            ; Draw at PieceLoc pointer on screen
 
             jsr CheckCollision      ; Check if piece can continue downward
 
             lda IsCollision         ; Nowhere to move so start another piece
-            beq @continue
-
+            beq @input
             lda #SOUND_BOOP         ; Play piece down sound
             ora SoundFlag
             sta SoundFlag
-
+            jsr Delay
             jmp @game               ; Generate another piece...
 
-@continue:
+
+@input:     jsr GetInput            ; Get user input: left, right, rotate, or drop.
+                                    ; Set MoveFlag if any input set.
+
+            lda #MOVE_ROTATE        ; Was a rotation requested?
+            and MoveFlag
+            beq @left_ch
+            lda #$00
+            sta MoveFlag
+
+            lda RotState            ; Check for collision on right when 
+            beq @skip_check         ; going from vertical to horizontal.
+            jsr checkCollideRight   ; Room on right to rotate?
+            lda IsCollision         
+            bne @left_ch
+
+@skip_check: 
+            lda #SPACE_CH           ; Setup to erase the rendered piece
+            sta CurChar
+            lda #WHITE
+            sta CurColor
+            jsr drawBuff 
+
+            jsr rotateCw
+            jmp @move_piece
+
+@left_ch:   lda #MOVE_LEFT          ; Move piece left
+            and MoveFlag
+            beq @right_ch
+            eor MoveFlag            ; Clear flag
+            sta MoveFlag
+
+            jsr checkCollideLeft    ; Sets IsCollision
+            lda IsCollision
+            bne @next_line 
 
             lda #SPACE_CH           ; Setup to erase the rendered piece
             sta CurChar
             lda #WHITE
             sta CurColor
+            jsr drawBuff 
+
+            lda PieceLoc            ; Calc one position to the left
+            bne @dec                ; http://6502org.wikidot.com/software-incdec#toc1
+            dec PieceLoc + 1
+@dec:       dec PieceLoc
 
             jsr drawBuff
 
-@left:      lda #MOVE_LEFT          ; Move piece left
+            jmp @move_piece
+
+
+@right_ch:  lda #MOVE_RIGHT         ; Move piece left
             and MoveFlag
-            beq @right
+            beq @next_line
             eor MoveFlag            ; Clear flag
-
-            ; Check can move piece left
-            ; jump to 'default' if not
-            jsr checkCollideLeft    ; Sets IsCollision
-            lda IsCollision
-            bne @default 
-
             sta MoveFlag
-            lda #(SCREEN_WIDTH - 1) ; Move to left
-            jmp @add
 
-@right:     lda #MOVE_RIGHT         ; Move piece right
-            and MoveFlag
-            beq @default
-            eor MoveFlag            ; Clear flag
-
-            ; Check can move piece right
-            ; jump to default if not
-            jsr checkCollideRight
+            jsr checkCollideRight   ; Sets IsCollision
             lda IsCollision
-            bne @default
+            bne @next_line 
 
-            sta MoveFlag            
-            lda #(SCREEN_WIDTH + 1) ; Move to the right
-            jmp @add
+            lda #SPACE_CH           ; Setup to erase the rendered piece
+            sta CurChar
+            lda #WHITE
+            sta CurColor
+            jsr drawBuff 
 
-@default:   lda #$00                ; May have been set in left/right collide check, above.
-            sta IsCollision
+            inc PieceLoc            ; Calc one position to the right
+            bne @skip_add
+            inc PieceLoc + 1
+@skip_add:  jmp @move_piece
+            
+@next_line: 
+            jsr Delay               ; Allow user to ponder his or her predicament.
 
-            lda #SCREEN_WIDTH       ; Default: advance to next line with no left/right movement
-
-@add:       sta num2lo              ; A set to some value depending on movement, set above
+            lda #SPACE_CH           ; Setup to erase the rendered piece
+            sta CurChar
+            lda #WHITE
+            sta CurColor
+            jsr drawBuff            
+  
+            lda #SCREEN_WIDTH
+            sta num2lo              ; A set to some value depending on movement, set above
             lda #$00
             sta num2hi
             lda PieceLoc            ; Advance to next line. Set up
@@ -327,7 +344,6 @@ main:
             lda PieceLoc + 1
             sta num1hi            
             jsr add
-
             lda reslo
             sta PieceLoc
             lda reshi
@@ -354,9 +370,9 @@ Welcome:
             lda #>TXT_TITLE
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 3) + ((SCREEN_WIDTH - 6 ) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 3) + ((SCREEN_WIDTH - 6) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
 
             lda #<TXT_CONTROLS_1
@@ -364,9 +380,9 @@ Welcome:
             lda #>TXT_CONTROLS_1
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 6) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 6) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
 
             lda #<TXT_CONTROLS_2
@@ -374,9 +390,9 @@ Welcome:
             lda #>TXT_CONTROLS_2
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 7) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 7) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
 
             lda #<TXT_CONTROLS_3
@@ -384,9 +400,9 @@ Welcome:
             lda #>TXT_CONTROLS_3
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 8) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 8) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
       
             lda #<TXT_CONTROLS_4
@@ -394,9 +410,9 @@ Welcome:
             lda #>TXT_CONTROLS_4
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 12) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
 
             lda #<TXT_START
@@ -404,9 +420,9 @@ Welcome:
             lda #>TXT_START
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 14) + ((SCREEN_WIDTH - 13 ) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 14) + ((SCREEN_WIDTH - 13 ) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
                         
 @any_key:   jsr GETIN               ; A is zero if no input read
@@ -431,14 +447,14 @@ GameOver:
             sta ColorPtr + 1
 
             lda #<(SCREEN + (SCREEN_WIDTH * 8))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 8))
-            sta DrawPtrLo + 1
+            sta DrawPtr + 1
           
             ldy #(SCREEN_WIDTH * 3)- 1          
 
 @red_band:  lda #BLOCK_CH
-            sta (DrawPtrLo), Y
+            sta (DrawPtr), Y
             lda #RED
             sta (ColorPtr), Y            
             dey
@@ -449,9 +465,9 @@ GameOver:
             lda #>TXT_GAME_OVER
             sta TextPtr + 1
             lda #<(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 9 ) / 2))
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>(SCREEN + (SCREEN_WIDTH * 9) + ((SCREEN_WIDTH - 9) / 2))
-            sta DrawPtrLo + 1            
+            sta DrawPtr + 1            
             jsr PrintString
 
 @any_key:   jsr GETIN               ; A is zero if no input read
@@ -604,7 +620,7 @@ PrintString:
             ldy #$00
 @loop_y:    lda (TextPtr), Y
             beq @end
-            sta (DrawPtrLo), Y
+            sta (DrawPtr), Y
             iny
             jmp @loop_y
 @end:       rts
@@ -780,13 +796,13 @@ drawBuff:
             lda #PieceBuff + 16 ; End of unpacked piece buffer
 
             lda PieceLoc            ; Copy current location to working poitner
-            sta DrawPtrLo
+            sta DrawPtr
             lda PieceLoc + 1
-            sta DrawPtrLo + 1
+            sta DrawPtr + 1
 
-            lda DrawPtrLo           ; Calculate offset into screen color area.
+            lda DrawPtr             ; Calculate offset into screen color area.
             sta num2lo              ; Colors are set $7800 bytes higher than
-            lda DrawPtrHi           ; the character memory.
+            lda DrawPtr + 1         ; the character memory.
             sta num2hi
             lda #<COLOR_OFFSET  
             sta num1lo
@@ -819,7 +835,7 @@ drawBuff:
             beq @skip_draw          ; If the buff character is set, output a block
 
             lda CurChar             ; Get character to draw
-            sta (DrawPtrLo), Y
+            sta (DrawPtr), Y
      
             lda CurColor            ; Get the color of the current piece
             sta (ColorPtr), Y
@@ -833,15 +849,15 @@ drawBuff:
             ldx #$04
             ldy #$03
 
-            lda DrawPtrLo           ; Update draw pointer to previous line
+            lda DrawPtr           ; Update draw pointer to previous line
             sta num1lo
-            lda DrawPtrHi
+            lda DrawPtr + 1
             sta num1hi
             jsr sub
             lda reslo
-            sta DrawPtrLo
+            sta DrawPtr
             lda reshi
-            sta DrawPtrHi  
+            sta DrawPtr + 1 
 
             lda ColorPtr            ; Update color pointer to previous line
             sta num1lo
@@ -929,16 +945,16 @@ CheckCollision:
             sta num2hi
             jsr sub
             lda reslo               ; Save result to draw pointer
-            sta DrawPtrLo
+            sta DrawPtr
             lda reshi
-            sta DrawPtrHi
+            sta DrawPtr + 1
 
             lda YIDX                ; Adjust start to column 0 - 3
             clc
-            adc DrawPtrLo
-            sta DrawPtrLo
+            adc DrawPtr
+            sta DrawPtr
             bcc @no_carry
-            inc DrawPtrHi
+            inc DrawPtr + 1
 
 @no_carry:
 
@@ -958,21 +974,21 @@ CheckCollision:
             beq @buff_clear 
             sta BuffColBlocks       ; Set "Column has block" flag
 
-            lda DrawPtrLo           ; Save screen position of the buffer block
+            lda DrawPtr           ; Save screen position of the buffer block
             sta CollisionPtr        
-            lda DrawPtrHi
+            lda DrawPtr + 1
             sta CollisionPtr + 1
 
 @buff_clear:
-            lda DrawPtrLo           ; Update screen pointer to next row
+            lda DrawPtr           ; Update screen pointer to next row
             sta num1lo
-            lda DrawPtrHi
+            lda DrawPtr + 1
             sta num1hi
             jsr add
             lda reslo
-            sta DrawPtrLo
+            sta DrawPtr
             lda reshi
-            sta DrawPtrHi
+            sta DrawPtr + 1
 
             txa                     ; Increment X to the next row.
             clc
@@ -1171,9 +1187,9 @@ checkLineComplete:
             sta RowCount
 
             lda #<BOARD_BOTTOM ;bottom left of board
-            sta DrawPtrLo
+            sta DrawPtr
             lda #>BOARD_BOTTOM 
-            sta DrawPtrLo + 1
+            sta DrawPtr + 1
 
             lda #SCREEN_WIDTH       ; Setup for screen row by screen row iteration
             sta num2lo
@@ -1185,7 +1201,7 @@ checkLineComplete:
             lda #BLOCK_CH
             ldy #BOARD_WIDTH - 1
 @loop_col:             
-            and (DrawPtrLo), Y      ; If a space found, go on to next row
+            and (DrawPtr), Y      ; If a space found, go on to next row
             cmp #BLOCK_CH
             bne @next_row
 
@@ -1204,15 +1220,15 @@ checkLineComplete:
 
  @next_row: 
           
-            lda DrawPtrLo
+            lda DrawPtr
             sta num1lo
-            lda DrawPtrLo + 1
+            lda DrawPtr + 1
             sta num1hi
             jsr sub
             lda reslo
-            sta DrawPtrLo
+            sta DrawPtr
             lda reshi
-            sta DrawPtrHi
+            sta DrawPtr + 1
 
             dex
             bne @loop_row
@@ -1229,14 +1245,14 @@ shiftDown:
             pha
             tya
             pha
-            lda DrawPtrLo           
+            lda DrawPtr           
             pha
-            lda DrawPtrLo + 1
+            lda DrawPtr + 1
             pha
 
-            lda DrawPtrLo           ; Setup pointer into colour memory.
+            lda DrawPtr             ; Setup pointer into colour memory.
             sta num1lo
-            lda DrawPtrLo + 1
+            lda DrawPtr + 1
             sta num1hi
 
             lda #<COLOR_OFFSET
@@ -1256,9 +1272,9 @@ shiftDown:
 
 @loop_row: ldy #BOARD_WIDTH - 1
 
-            lda DrawPtrLo           ; Set up source pointer. reslo will 
+            lda DrawPtr             ; Set up source pointer. reslo will 
             sta num1lo              ; contain pointer to previous (above) line
-            lda DrawPtrLo + 1
+            lda DrawPtr + 1
             sta num1hi
             jsr sub
             lda reslo
@@ -1273,7 +1289,7 @@ shiftDown:
             jsr sub
 
 @loop_col:  lda (SrcPtr), Y         ; Copy character from row above to row below
-            sta (DrawPtrLo), Y
+            sta (DrawPtr), Y
 
             lda (reslo), Y          ; Copy color form row above to row below
             sta (ColorPtr), Y
@@ -1282,9 +1298,9 @@ shiftDown:
             bpl @loop_col
 
  @next_row: lda SrcPtr              ; Make the row above the new current row
-            sta DrawPtrLo
+            sta DrawPtr
             lda SrcPtr + 1            
-            sta DrawPtrLo + 1
+            sta DrawPtr + 1
             
             lda reslo
             sta ColorPtr
@@ -1295,9 +1311,9 @@ shiftDown:
             bne @loop_row
 
             pla                     ; Restore registers and draw pointer
-            sta DrawPtrLo + 1
+            sta DrawPtr + 1
             pla 
-            sta DrawPtrLo
+            sta DrawPtr
             pla      
             tay
             pla
