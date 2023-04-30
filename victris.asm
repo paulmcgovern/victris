@@ -1,18 +1,23 @@
-;https://www.cc65.org/doc/ca65.html#toc11board_b
-; https://github.com/bbbradsmith/NES-ca65-example/blob/master/example.s
-; /usr/bin/flatpak run --branch=stable --arch=x86_64 --command=xvic net.sf.VICE --autostart test
-; D64 file disk image maker is in the flatpak distro too.
-; https://dl.dropboxusercontent.com/s/cl7391x5hqwk8zf/GoatPowerExample.asm
-; rm test.o test; cl65 test.asm -t vic20 -C vic20-aliens-inv/vic20alinv.cfg -o test
+;                                                                              
+;   _|      _|   _|_|_|     _|_|_|               _|_|       _|
+;   _|      _|     _|     _|                   _|    _|   _|  _|
+;   _|      _|     _|     _|        _|_|_|_|       _|     _|  _|
+;     _|  _|       _|     _|                     _|       _|  _|
+;       _|       _|_|_|    _|_|_|              _|_|_|_|     _|
 ;
-; https://unfinishedbitness.info/2014/09/26/6502-string-to-integer-and-reverse/
-;http://www.zimmers.net/anonftp/pub/cbm/maps/Vic20.MemoryMap.txt
-; Compile: create label file
-; rm test.o test; cl65 test.asm -Ln test.lbl -m map.txt -t vic20 -C vic20-aliens-inv/vic20alinv.cfg -o test
-; Get "random" value form clock low bit at $00A2
-; Modulus function from
-; https://gist.github.com/hausdorff/5993556
-; https://github.com/bbbradsmith/prng_6502
+;   _|_|_|_|_|   _|_|_|_|   _|_|_|_|_|   _|_|_|     _|_|_|     _|_|_|
+;       _|       _|             _|       _|    _|     _|     _|
+;       _|       _|_|_|         _|       _|_|_|       _|       _|_|
+;       _|       _|             _|       _|    _|     _|           _|
+;       _|       _|_|_|_|       _|       _|    _|   _|_|_|   _|_|_|
+;   
+;                                                                           
+; Game pieces are encoded as bytes and unpacked into PieceBuff. Sounds
+; are played in the interrupt handler.
+;                                                                            
+; Written for for CA65. Compile with:
+; cl65 victris.asm -Ln victris.lbl -t vic20 -C vic20.cfg -o victris
+;                                                                                                    
 
 .debuginfo +            ; Genreate label file
 .macpack cbm            ; Enable scrcode macro (ASCII to PETSKII)
@@ -615,7 +620,7 @@ ClearScreen:
 
 ; Print string to screen. Reads from TextPtr.
 ; Assumes string is terminated with 0, '@' in PETSCII.
-; Location to print to is given by DrawPtrLo
+; Location to print to is given by DrawPtr
 PrintString:
             ldy #$00
 @loop_y:    lda (TextPtr), Y
