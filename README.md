@@ -18,7 +18,7 @@ fit in Zero Page memory, so you would be left fiddling with pointers
 anyway.
 
 The 6502 does not have a multiply instruction, so as a point of honour,
-this program does not multiply anyhting.
+this program does not multiply anything.
 
 Utility functions were cribbed from around the web. The integer to
 string (by way of BCD) routines were lifted from [vic20-aliens-inv](https://github.com/DarwinNE/vic20-aliens-inv).
